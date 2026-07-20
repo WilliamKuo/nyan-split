@@ -1,0 +1,122 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() { return request.auth != null; }
+    function user() { return get(/databases/$(database)/documents/users/$(request.auth.uid)); }
+    function active() {
+      return signedIn()
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && user().data.status == 'active';
+    }
+    function admin() { return active() && user().data.role == 'admin'; }
+    function validCurrency(currency) {
+      return currency is string && currency.matches('^[A-Z]{3}$');
+    }
+    function legacyAllowedCurrency(currency) {
+      return currency == 'TWD';
+    }
+    function hasCurrencyAllowlist() {
+      return exists(/databases/$(database)/documents/settings/app)
+        && get(/databases/$(database)/documents/settings/app).data.keys()
+          .hasAll(['allowedCurrencies']);
+    }
+    function currencyAllowedBySettings(currency) {
+      return get(/databases/$(database)/documents/settings/app).data.allowedCurrencies is list
+        && currency in get(/databases/$(database)/documents/settings/app).data.allowedCurrencies;
+    }
+    function allowedCurrency(currency) {
+      return validCurrency(currency)
+        && (
+          (!hasCurrencyAllowlist() && legacyAllowedCurrency(currency))
+          || (hasCurrencyAllowlist() && currencyAllowedBySettings(currency))
+        );
+    }
+    function validAlias(alias) {
+      return alias is string && alias.size() > 0 && alias.size() <= 40;
+    }
+    function validUserCurrencySettings(data) {
+      return (!data.keys().hasAll(['resultCurrency'])
+          || allowedCurrency(data.resultCurrency))
+        && (!data.keys().hasAll(['currencyRates'])
+          || data.currencyRates is map);
+    }
+    function activeUser(userId) {
+      return exists(/databases/$(database)/documents/users/$(userId))
+        && get(/databases/$(database)/documents/users/$(userId)).data.status == 'active';
+    }
+
+    match /users/{userId} {
+      allow create: if signedIn() && request.auth.uid == userId
+        && request.resource.data.status == 'pending'
+        && request.resource.data.role == 'user'
+        && validAlias(request.resource.data.alias)
+        && allowedCurrency(request.resource.data.resultCurrency);
+      allow get: if (signedIn() && request.auth.uid == userId)
+        || admin()
+        || (active() && resource.data.status == 'active');
+      allow list: if admin()
+        || (active() && resource.data.status == 'active');
+      allow update: if admin()
+        || (signedIn() && request.auth.uid == userId
+          && request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['alias', 'resultCurrency', 'currencyRates', 'updatedAt'])
+          && validAlias(request.resource.data.alias)
+          && validUserCurrencySettings(request.resource.data));
+      allow delete: if admin() && request.auth.uid != userId;
+    }
+    match /settings/{settingId} {
+      allow get: if signedIn();
+      allow list: if false;
+      allow create, update, delete: if admin();
+    }
+    match /ledger/{entryId} {
+      allow read: if active();
+      allow create: if active()
+        && request.resource.data.keys().hasOnly([
+          'amount',
+          'cleared',
+          'creditorId',
+          'createdAt',
+          'createdBy',
+          'currency',
+          'debtorId',
+          'note'
+        ])
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.creditorId is string
+        && request.resource.data.debtorId is string
+        && request.resource.data.creditorId != request.resource.data.debtorId
+        && activeUser(request.resource.data.creditorId)
+        && activeUser(request.resource.data.debtorId)
+        && request.resource.data.amount is number
+        && request.resource.data.amount > 0
+        && allowedCurrency(request.resource.data.currency);
+      allow update: if admin()
+        || (active()
+          && resource.data.createdBy == request.auth.uid
+          && request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['cleared'])
+          && request.resource.data.cleared is bool);
+      allow delete: if active()
+        && (resource.data.createdBy == request.auth.uid || admin());
+    }
+    match /ledgerImages/{entryId} {
+      allow read: if active();
+      allow create: if active()
+        && request.resource.data.keys().hasOnly([
+          'createdAt',
+          'createdBy',
+          'dataUrl',
+          'ledgerId'
+        ])
+        && request.resource.data.ledgerId == entryId
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.dataUrl is string
+        && request.resource.data.dataUrl.size() <= 700000
+        && getAfter(/databases/$(database)/documents/ledger/$(entryId))
+          .data.createdBy == request.auth.uid;
+      allow delete: if active()
+        && (resource.data.createdBy == request.auth.uid || admin());
+    }
+  }
+}

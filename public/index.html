@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#0b0a16" />
+    <meta name="color-scheme" content="dark" />
+    <meta name="description" content="供朋友使用的共用記帳帳本。" />
+    <title>NyanSplit</title>
+    <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
+    <link rel="manifest" href="./manifest.json" />
+    <link rel="apple-touch-icon" href="./favicon.svg" />
+    <link rel="stylesheet" href="./style.css" />
+    <script>
+      document.documentElement.dataset.theme = localStorage.getItem('nyan-split-theme') || 'dark';
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="./app.js"></script>
+    <script>
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+          navigator.serviceWorker.register('./sw.js').catch((error) => {
+            console.warn('Could not register the NyanSplit service worker.', error);
+          });
+        });
+      }
+    </script>
+  </body>
+</html>
