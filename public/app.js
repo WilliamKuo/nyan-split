@@ -77,7 +77,6 @@ let ledgerImages = new Map();
 let activeUsers = [];
 let notice = '';
 let activeView = 'ledger';
-let activeAdminTab = 'users';
 let pendingResultCurrency = '';
 let pendingCurrencyRateDraft = null;
 let selectedLedgerImageEntryId = '';
@@ -86,6 +85,7 @@ let editingLedgerEntryId = '';
 let pendingLedgerImageFocus = null;
 let seedingCurrencyRates = false;
 let initialCurrencyRatesSeeded = false;
+let appVersion = '';
 
 let stopProfile;
 let stopSettings;
@@ -761,9 +761,8 @@ function renderLedgerImageButton(entry) {
   const label = images.length
     ? t('viewImageCount', { count: images.length })
     : t('addImage');
-  const countLabel = images.length ? ` (${images.length})` : '';
 
-  return `<button class="ledger-image-button secondary-button" type="button" data-view-ledger-image="${escapeHtml(entry.id)}" aria-label="${escapeHtml(label)}">${escapeHtml(t('image'))}${escapeHtml(countLabel)}</button>`;
+  return `<button class="ledger-image-button secondary-button" type="button" data-view-ledger-image="${escapeHtml(entry.id)}" aria-label="${escapeHtml(label)}">📷</button>`;
 }
 
 function renderLedgerImageViewer() {
@@ -907,11 +906,13 @@ function renderSettlementSummary(myBalance) {
     </div>`;
   }).join('');
 
+  const helpText = t('settlementSummaryHelp', { currency: `<strong class="highlight-currency">${escapeHtml(currency)}</strong>` });
+  
   return `<section class="accounting-card settlement-card">
     <div class="card-heading">
       <div>
         <h3>${escapeHtml(t('settlementSummary'))}</h3>
-        <p>${escapeHtml(t('settlementSummaryHelp', { currency }))}</p>
+        <p>${helpText}</p>
       </div>
     </div>
     <section class="result-card settlement-result-card" aria-label="${escapeHtml(t('myResult'))}">
@@ -937,7 +938,7 @@ function renderLedgerEntryEdit(entry) {
   const currency = entry.currency || DEFAULT_CURRENCY;
 
   return `<tr class="ledger-row-editing">
-    <td colspan="8">
+    <td colspan="10">
       <form id="ledger-edit-form" class="ledger-form ledger-edit-form">
         <label class="field ledger-person-field"><span class="sr-only">${escapeHtml(t('debtor'))}</span><select name="debtorId" aria-label="${escapeHtml(t('debtor'))}">${accountOptions(debtorId)}</select></label>
         <span class="debt-connector" aria-hidden="true">${escapeHtml(t('debtConnector'))}</span>
@@ -956,7 +957,7 @@ function renderLedgerEntryEdit(entry) {
 
 function renderLedgerRows() {
   if (!ledgerEntries.length) {
-    return `<tr><td class="empty-cell" colspan="8">${escapeHtml(t('noEntries'))}</td></tr>`;
+    return `<tr><td class="empty-cell" colspan="10">${escapeHtml(t('noEntries'))}</td></tr>`;
   }
 
   return ledgerEntries.flatMap((entry) => {
@@ -968,6 +969,9 @@ function renderLedgerRows() {
     const creditorId = entry.creditorId || entry.paidBy;
     const debtor = userAlias(activeUsers.find((user) => user.id === debtorId));
     const creditor = userAlias(activeUsers.find((user) => user.id === creditorId));
+    const creator = entry.createdBy 
+      ? userAlias(activeUsers.find((user) => user.id === entry.createdBy)) || t('unknownUser')
+      : '—';
     const cleared = Boolean(entry.cleared);
     const actions = canManageEntry(entry)
       ? `<div class="entry-action-list">
@@ -981,9 +985,11 @@ function renderLedgerRows() {
     <td class="ledger-user-cell" title="${escapeHtml(debtor)}">${escapeHtml(debtor)}</td>
     <td class="debt-table-connector">${escapeHtml(t('debtConnector'))}</td>
     <td class="ledger-user-cell" title="${escapeHtml(creditor)}">${escapeHtml(creditor)}</td>
-    <td>${escapeHtml(formatMoney(entry.amount, entry.currency || DEFAULT_CURRENCY))}</td>
+    <td>${escapeHtml(entry.amount?.toFixed(2) || '0.00')}</td>
+    <td>${escapeHtml(entry.currency || DEFAULT_CURRENCY)}</td>
     <td>${escapeHtml(entry.note || '—')}</td>
     <td class="ledger-image-cell">${renderLedgerImageButton(entry)}</td>
+    <td class="ledger-user-cell" title="${escapeHtml(creator)}">${escapeHtml(creator)}</td>
     <td class="entry-actions">${actions}</td>
   </tr>`];
   }).join('');
@@ -1047,7 +1053,7 @@ function renderLedger() {
       <div class="card-heading"><div><h3>${escapeHtml(t('ledger'))}</h3><p>${escapeHtml(t('ledgerHelp'))}</p></div></div>
       <div class="table-wrap">
         <table class="ledger-table">
-          <thead><tr><th class="ledger-mobile-summary-column"></th><th class="ledger-user-column">${escapeHtml(t('debtor'))}</th><th class="ledger-debt-column" aria-label="${escapeHtml(t('debtConnector'))}"></th><th class="ledger-user-column">${escapeHtml(t('creditor'))}</th><th class="ledger-amount-column">${escapeHtml(t('amount'))}</th><th>${escapeHtml(t('note'))}</th><th class="ledger-image-column">${escapeHtml(t('image'))}</th><th>${escapeHtml(t('action'))}</th></tr></thead>
+          <thead><tr><th class="ledger-mobile-summary-column"></th><th class="ledger-user-column">${escapeHtml(t('debtor'))}</th><th class="ledger-debt-column" aria-label="${escapeHtml(t('debtConnector'))}"></th><th class="ledger-user-column">${escapeHtml(t('creditor'))}</th><th class="ledger-amount-column">${escapeHtml(t('amount'))}</th><th>${escapeHtml(t('currency'))}</th><th>${escapeHtml(t('note'))}</th><th class="ledger-image-column">${escapeHtml(t('image'))}</th><th>${escapeHtml(t('creator'))}</th><th>${escapeHtml(t('action'))}</th></tr></thead>
           <tbody>${renderLedgerRows()}</tbody>
         </table>
       </div>
@@ -1060,12 +1066,8 @@ function renderLedger() {
 function renderAccount() {
   const isAdmin = profile.role === 'admin';
   const adminContent = isAdmin ? `
-    <div class="page-heading" style="margin-top: 2rem;"><div><p class="eyebrow">${escapeHtml(t('settings'))}</p><h2>${escapeHtml(t('settings'))}</h2></div></div>
-    <div class="admin-tabs" role="tablist" aria-label="${escapeHtml(t('settings'))}">
-      <button class="admin-tab${activeAdminTab === 'users' ? ' chosen' : ''}" id="admin-tab-users" type="button" role="tab" aria-controls="admin-panel-users" aria-selected="${String(activeAdminTab === 'users')}" data-admin-tab="users">${escapeHtml(t('users'))}</button>
-      <button class="admin-tab${activeAdminTab === 'currencies' ? ' chosen' : ''}" id="admin-tab-currencies" type="button" role="tab" aria-controls="admin-panel-currencies" aria-selected="${String(activeAdminTab === 'currencies')}" data-admin-tab="currencies">${escapeHtml(t('allowedCurrencies'))}</button>
-    </div>
-    ${activeAdminTab === 'currencies' ? renderAdminCurrencySettings(currentAdminCurrencySettings()) : renderAdminUsers()}
+    ${renderAdminUsers()}
+    ${renderAdminCurrencySettings(currentAdminCurrencySettings())}
   ` : '';
 
   return `<section class="page-content narrow-content">
@@ -1150,25 +1152,8 @@ function renderUserRows() {
   </tr>`).join('');
 }
 
-function renderAdmin() {
-  const adminSettings = currentAdminCurrencySettings();
-  const isCurrencyTab = activeAdminTab === 'currencies';
-  const content = isCurrencyTab
-    ? renderAdminCurrencySettings(adminSettings)
-    : renderAdminUsers();
-
-  return `<section class="page-content narrow-content">
-    <div class="page-heading"><div><p class="eyebrow">${escapeHtml(t('settings'))}</p><h2>${escapeHtml(t('settings'))}</h2></div></div>
-    <div class="admin-tabs" role="tablist" aria-label="${escapeHtml(t('settings'))}">
-      <button class="admin-tab${isCurrencyTab ? '' : ' chosen'}" id="admin-tab-users" type="button" role="tab" aria-controls="admin-panel-users" aria-selected="${String(!isCurrencyTab)}" data-admin-tab="users">${escapeHtml(t('users'))}</button>
-      <button class="admin-tab${isCurrencyTab ? ' chosen' : ''}" id="admin-tab-currencies" type="button" role="tab" aria-controls="admin-panel-currencies" aria-selected="${String(isCurrencyTab)}" data-admin-tab="currencies">${escapeHtml(t('allowedCurrencies'))}</button>
-    </div>
-    ${content}
-  </section>`;
-}
-
 function renderAdminCurrencySettings(adminSettings) {
-  return `<section class="accounting-card" id="admin-panel-currencies" role="tabpanel" aria-labelledby="admin-tab-currencies">
+  return `<section class="accounting-card">
       <div class="card-heading"><div><h3>${escapeHtml(t('allowedCurrencies'))}</h3><p>${escapeHtml(t('settingsRegistrationHelp'))}</p></div></div>
       <form id="app-settings-form" class="stack-form">
         <label class="field"><span>${escapeHtml(t('defaultCurrency'))}</span><select id="app-settings-default-currency" name="defaultCurrency">${renderCurrencyOptions(adminSettings.defaultCurrency, adminSettings.allowedCurrencies)}</select></label>
@@ -1185,7 +1170,7 @@ function renderAdminCurrencySettings(adminSettings) {
 }
 
 function renderAdminUsers() {
-  return `<section class="accounting-card" id="admin-panel-users" role="tabpanel" aria-labelledby="admin-tab-users">
+  return `<section class="accounting-card">
       <div class="card-heading"><div><h3>${escapeHtml(t('users'))}</h3><p>${escapeHtml(t('usersHelp'))}</p></div></div>
       <form id="add-user-form" class="inline-form" style="margin-bottom: 1rem;">
         <label class="field"><span>${escapeHtml(t('alias'))}</span><input name="alias" maxlength="40" placeholder="${escapeHtml(t('alias'))}" required autocomplete="off" /></label>
@@ -1216,13 +1201,16 @@ function renderApplication() {
       ${brand()}
       <section class="profile-summary${activeView === 'account' ? ' chosen' : ''}" role="button" tabindex="0" data-view="account" aria-label="${escapeHtml(t('account'))}">
         ${renderUserAvatar(profile)}
-        <div><strong>${escapeHtml(userAlias(profile))}</strong><span>${escapeHtml(profileCurrency())}</span></div>
+        <div><strong>${escapeHtml(userAlias(profile))}</strong></div>
       </section>
     </aside>
     <nav class="app-nav" aria-label="${escapeHtml(t('applicationNavigation'))}">
-      ${navigationItem('add-entry', '➕', t('newEntry'))}
-      ${navigationItem('ledger', '🧮', t('accounting'))}
-      ${navigationItem('conversion', '💱', t('conversionSettings'))}
+      <div>
+        ${navigationItem('add-entry', '➕', t('newEntry'))}
+        ${navigationItem('ledger', '📖', t('accounting'))}
+        ${navigationItem('conversion', '💱', t('conversionSettings'))}
+      </div>
+      ${appVersion ? `<p class="app-version">${escapeHtml(appVersion)}</p>` : ''}
     </nav>
     <section class="content-panel">
       ${notice ? `<p class="notice" role="alert">${escapeHtml(notice)}</p>` : ''}
@@ -1242,6 +1230,7 @@ function render() {
       <button type="button" data-action="login">${escapeHtml(t('login'))}</button>
       <button class="secondary-button" type="button" data-action="anonymous-login">${escapeHtml(t('anonymousLogin'))}</button>
       <p class="muted">${escapeHtml(t('anonymousLoginHelp'))}</p>
+      ${appVersion ? `<p class="app-version" style="margin-top: 2rem; font-size: 0.875rem; opacity: 0.6;">${escapeHtml(appVersion)}</p>` : ''}
     `);
     bind();
     return;
@@ -1310,13 +1299,6 @@ function bind() {
         event.preventDefault();
         control.click();
       }
-    };
-  });
-  document.querySelectorAll('[data-admin-tab]').forEach((button) => {
-    button.onclick = () => {
-      activeAdminTab = button.dataset.adminTab;
-      notice = '';
-      render();
     };
   });
   document.querySelector('#registration-form')?.addEventListener('submit', completeRegistration);
@@ -1955,12 +1937,24 @@ function clearAllListeners() {
   stopActiveListeners();
 }
 
+async function fetchVersion() {
+  try {
+    const response = await fetch('./VERSION');
+    if (response.ok) {
+      appVersion = (await response.text()).trim();
+    }
+  } catch (error) {
+    console.error('Failed to fetch version:', error);
+  }
+}
+
+void fetchVersion();
+
 onAuthStateChanged(auth, (user) => {
   clearAllListeners();
   authUser = user;
   profile = null;
   activeView = 'ledger';
-  activeAdminTab = 'users';
   notice = '';
   settings = defaultSettings();
   adminCurrencySettings = null;

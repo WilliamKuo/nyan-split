@@ -314,6 +314,7 @@ input[readonly] {
 
 .app-nav {
   display: flex;
+  flex-direction: column;
   position: fixed;
   z-index: 30;
   bottom: max(1.5rem, env(safe-area-inset-bottom));
@@ -326,6 +327,20 @@ input[readonly] {
   border-radius: 2rem;
   box-shadow: 0 15px 45px rgb(0 0 0 / 45%);
   backdrop-filter: blur(20px);
+}
+
+.app-nav > :first-child {
+  display: flex;
+  gap: .35rem;
+}
+
+.app-version {
+  margin: 0;
+  padding: .25rem .5rem 0;
+  font-size: .75rem;
+  color: var(--muted);
+  text-align: center;
+  opacity: 0.6;
 }
 
 .nav-item {
@@ -416,6 +431,11 @@ input[readonly] {
 
 .debt {
   color: var(--cyan);
+}
+
+.highlight-currency {
+  color: var(--violet-light);
+  font-weight: 700;
 }
 
 .accounting-card {
@@ -1155,7 +1175,8 @@ html[data-theme="light"] .app-nav {
   }
 
   .app-nav {
-    display: grid;
+    display: flex;
+    flex-direction: column;
     position: fixed;
     z-index: 30;
     right: .75rem;
@@ -1163,8 +1184,6 @@ html[data-theme="light"] .app-nav {
     left: .75rem;
     transform: none;
     width: auto;
-    grid-auto-flow: column;
-    grid-auto-columns: minmax(0, 1fr);
     gap: .25rem;
     padding: .4rem;
     background: rgb(29 25 52 / 94%);
@@ -1172,6 +1191,13 @@ html[data-theme="light"] .app-nav {
     border-radius: 1.35rem;
     box-shadow: 0 15px 45px rgb(0 0 0 / 45%);
     backdrop-filter: blur(20px);
+  }
+
+  .app-nav > :first-child {
+    display: grid;
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(0, 1fr);
+    gap: .25rem;
   }
 
   .nav-item {
