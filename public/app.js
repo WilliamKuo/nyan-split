@@ -946,8 +946,15 @@ function statusBadge(status) {
 
 function renderUserRows() {
   return activeUsers.map((user) => `<tr>
-    <td><strong>${escapeHtml(userAlias(user))}</strong><br /><span class="muted">${escapeHtml(user.email || '')}</span></td>
-    <td>${escapeHtml(user.resultCurrency || user.preferredCurrency || settings.defaultCurrency)}</td>
+    <td>
+      <div style="display: flex; align-items: center; gap: .75rem;">
+        ${user.photoURL ? `<img src="${escapeHtml(user.photoURL)}" alt="" style="width: 2rem; height: 2rem; border-radius: 50%; object-fit: cover; flex: 0 0 auto;" />` : `<span class="avatar" style="flex: 0 0 auto;">${escapeHtml(userAlias(user).slice(0, 1).toUpperCase())}</span>`}
+        <div style="min-width: 0; overflow: hidden; text-overflow: ellipsis;">
+          <strong>${escapeHtml(userAlias(user))}</strong><br />
+          <span class="muted">${escapeHtml(user.email || 'N/A')}</span>
+        </div>
+      </div>
+    </td>
     <td>${statusBadge(user.status || 'pending')}</td>
     <td class="user-actions">${user.status === 'pending' ? `<button type="button" data-user-status="active" data-user-id="${escapeHtml(user.id)}">${escapeHtml(t('approve'))}</button><button class="secondary-button danger-text" type="button" data-user-status="rejected" data-user-id="${escapeHtml(user.id)}">${escapeHtml(t('reject'))}</button>` : user.status === 'rejected' ? `<button type="button" data-user-status="active" data-user-id="${escapeHtml(user.id)}">${escapeHtml(t('approve'))}</button>` : ''}${user.id !== profile.uid ? `<button class="secondary-button danger-text" type="button" data-remove-user="${escapeHtml(user.id)}">${escapeHtml(t('removeUser'))}</button>` : user.status === 'active' ? '<span class="muted">—</span>' : ''}</td>
   </tr>`).join('');
@@ -990,8 +997,12 @@ function renderAdminCurrencySettings(adminSettings) {
 function renderAdminUsers() {
   return `<section class="accounting-card" id="admin-panel-users" role="tabpanel" aria-labelledby="admin-tab-users">
       <div class="card-heading"><div><h3>${escapeHtml(t('users'))}</h3><p>${escapeHtml(t('usersHelp'))}</p></div></div>
+      <form id="add-user-form" class="inline-form" style="margin-bottom: 1rem;">
+        <label class="field"><span>${escapeHtml(t('alias'))}</span><input name="alias" maxlength="40" placeholder="${escapeHtml(t('alias'))}" required autocomplete="off" /></label>
+        <button type="submit" class="secondary-button">${escapeHtml(t('addUser'))}</button>
+      </form>
       <div class="table-wrap"><table class="admin-users-table">
-        <thead><tr><th>${escapeHtml(t('user'))}</th><th>${escapeHtml(t('currency'))}</th><th>${escapeHtml(t('status'))}</th><th>${escapeHtml(t('actions'))}</th></tr></thead>
+        <thead><tr><th>${escapeHtml(t('user'))}</th><th>${escapeHtml(t('status'))}</th><th>${escapeHtml(t('actions'))}</th></tr></thead>
         <tbody>${renderUserRows()}</tbody>
       </table></div>
     </section>`;
@@ -1015,12 +1026,12 @@ function renderApplication() {
         <span class="avatar">${escapeHtml(userAlias(profile).slice(0, 1).toUpperCase())}</span>
         <div><strong>${escapeHtml(userAlias(profile))}</strong><span>${escapeHtml(profileCurrency())}</span></div>
       </section>
-      <nav class="app-nav" aria-label="${escapeHtml(t('applicationNavigation'))}">
-        ${navigationItem('ledger', '▣', t('accounting'))}
-        ${navigationItem('share', '⌁', t('shareInstall'))}
-        ${profile.role === 'admin' ? navigationItem('admin', '♙', t('settings')) : ''}
-      </nav>
     </aside>
+    <nav class="app-nav" aria-label="${escapeHtml(t('applicationNavigation'))}">
+      ${navigationItem('ledger', '🧮', t('accounting'))}
+      ${navigationItem('share', '🔗', t('shareInstall'))}
+      ${profile.role === 'admin' ? navigationItem('admin', '⚙️', t('settings')) : ''}
+    </nav>
     <section class="content-panel">
       ${notice ? `<p class="notice" role="alert">${escapeHtml(notice)}</p>` : ''}
       ${content}
@@ -1116,6 +1127,7 @@ function bind() {
   });
   document.querySelector('#registration-form')?.addEventListener('submit', completeRegistration);
   document.querySelector('#account-form')?.addEventListener('submit', saveAccount);
+  document.querySelector('#add-user-form')?.addEventListener('submit', addAdminUser);
   const ledgerForm = document.querySelector('#ledger-form');
   ledgerForm?.addEventListener('submit', addLedgerEntry);
   ledgerForm?.elements.debtorId?.addEventListener('change', updateCreditorOptions);
@@ -1237,6 +1249,31 @@ async function completeRegistration(event) {
       updatedAt: serverTimestamp(),
     });
     notice = '';
+  } catch (error) {
+    reportError(error);
+  }
+}
+
+async function addAdminUser(event) {
+  event.preventDefault();
+  try {
+    const form = event.currentTarget;
+    const alias = cleanAlias(new FormData(form).get('alias'));
+    if (!alias) {
+      setNotice(t('aliasRequired'));
+      return;
+    }
+    await setDoc(doc(collection(db, 'users')), {
+      alias,
+      email: '',
+      photoURL: '',
+      resultCurrency: currentAdminCurrencySettings().defaultCurrency,
+      role: 'user',
+      status: 'active',
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+    form.reset();
   } catch (error) {
     reportError(error);
   }

@@ -237,7 +237,7 @@ input[readonly] {
   position: sticky;
   z-index: 20;
   top: 0;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   min-height: 4.5rem;
   align-items: center;
   padding: max(.75rem, env(safe-area-inset-top)) 1rem .75rem;
@@ -290,18 +290,31 @@ input[readonly] {
 
 .app-nav {
   display: flex;
-  justify-content: flex-end;
+  position: fixed;
+  z-index: 30;
+  bottom: max(1.5rem, env(safe-area-inset-bottom));
+  left: 50%;
+  transform: translateX(-50%);
   gap: .35rem;
+  padding: .5rem;
+  background: rgb(29 25 52 / 94%);
+  border: 1px solid var(--line);
+  border-radius: 2rem;
+  box-shadow: 0 15px 45px rgb(0 0 0 / 45%);
+  backdrop-filter: blur(20px);
 }
 
 .nav-item {
+  display: flex;
+  align-items: center;
+  gap: .5rem;
   width: auto;
-  padding: .65rem .7rem;
+  padding: .6rem 1.1rem;
   color: var(--muted);
   background: transparent;
   border: 1px solid transparent;
-  border-radius: .65rem;
-  text-align: center;
+  border-radius: 1.5rem;
+  font-weight: 600;
 }
 
 .nav-icon {
@@ -323,6 +336,7 @@ input[readonly] {
   width: min(100%, 82rem);
   margin: 0 auto;
   padding: clamp(1.1rem, 4vw, 2.5rem);
+  padding-bottom: calc(6rem + env(safe-area-inset-bottom));
 }
 
 .page-content {
@@ -982,6 +996,11 @@ html[data-theme="light"] .side-panel {
   background: rgb(250 248 255 / 92%);
 }
 
+html[data-theme="light"] .app-nav {
+  background: rgb(255 255 255 / 94%);
+  box-shadow: 0 15px 45px rgb(40 31 66 / 18%);
+}
+
 @media (max-width: 900px) {
   .ledger-form {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1051,6 +1070,8 @@ html[data-theme="light"] .side-panel {
     right: .75rem;
     bottom: max(.55rem, env(safe-area-inset-bottom));
     left: .75rem;
+    transform: none;
+    width: auto;
     grid-auto-flow: column;
     grid-auto-columns: minmax(0, 1fr);
     gap: .25rem;
@@ -1092,10 +1113,6 @@ html[data-theme="light"] .side-panel {
     background: rgb(155 135 245 / 14%);
   }
 
-  html[data-theme="light"] .app-nav {
-    background: rgb(255 255 255 / 94%);
-    box-shadow: 0 15px 45px rgb(40 31 66 / 18%);
-  }
 
   html[data-theme="light"] .nav-item.chosen {
     background: rgb(104 68 216 / 12%);
@@ -1304,7 +1321,6 @@ html[data-theme="light"] .side-panel {
     grid-template-columns: 1fr auto;
     grid-template-areas:
       "user    status"
-      "currency currency"
       "actions actions";
     gap: .35rem .6rem;
     padding: .75rem .85rem;
@@ -1323,17 +1339,11 @@ html[data-theme="light"] .side-panel {
   }
 
   .admin-users-table tbody tr td:nth-child(2) {
-    grid-area: currency;
-    color: var(--muted);
-    font-size: .82rem;
-  }
-
-  .admin-users-table tbody tr td:nth-child(3) {
     grid-area: status;
     justify-self: end;
   }
 
-  .admin-users-table tbody tr td:nth-child(4) {
+  .admin-users-table tbody tr td:nth-child(3) {
     grid-area: actions;
     width: auto;
     white-space: normal;
@@ -1341,7 +1351,7 @@ html[data-theme="light"] .side-panel {
     border-top: 1px solid var(--line);
   }
 
-  .admin-users-table tbody tr td:nth-child(4) .user-actions {
+  .admin-users-table tbody tr td:nth-child(3) .user-actions {
     flex-wrap: wrap;
   }
 
