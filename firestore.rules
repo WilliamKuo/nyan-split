@@ -40,6 +40,17 @@ service cloud.firestore {
         && (!data.keys().hasAll(['currencyRates'])
           || data.currencyRates is map);
     }
+    function validLedgerEntryFields(data) {
+      return data.creditorId is string
+        && data.debtorId is string
+        && data.creditorId != data.debtorId
+        && activeUser(data.creditorId)
+        && activeUser(data.debtorId)
+        && data.amount is number
+        && data.amount > 0
+        && allowedCurrency(data.currency)
+        && data.note is string;
+    }
     function activeUser(userId) {
       return exists(/databases/$(database)/documents/users/$(userId))
         && get(/databases/$(database)/documents/users/$(userId)).data.status == 'active';
@@ -96,16 +107,18 @@ service cloud.firestore {
         && request.resource.data.amount is number
         && request.resource.data.amount > 0
         && allowedCurrency(request.resource.data.currency);
-      allow update: if admin()
-        || (active()
-          && resource.data.createdBy == request.auth.uid
-          && request.resource.data.diff(resource.data).affectedKeys()
-            .hasOnly(['cleared'])
-          && request.resource.data.cleared is bool);
+      allow update: if active()
+        && request.resource.data.createdBy == resource.data.createdBy
+        && validLedgerEntryFields(request.resource.data)
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['amount', 'creditorId', 'debtorId', 'currency', 'note', 'cleared'])
+        && (admin() || resource.data.createdBy == request.auth.uid)
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['cleared'])
+          || request.resource.data.cleared is bool);
       allow delete: if active()
         && (resource.data.createdBy == request.auth.uid || admin());
     }
-    match /ledgerImages/{entryId} {
+    match /ledgerImages/{imageId} {
       allow read: if active();
       allow create: if active()
         && request.resource.data.keys().hasOnly([
@@ -114,12 +127,15 @@ service cloud.firestore {
           'dataUrl',
           'ledgerId'
         ])
-        && request.resource.data.ledgerId == entryId
+        && request.resource.data.ledgerId is string
         && request.resource.data.createdBy == request.auth.uid
         && request.resource.data.dataUrl is string
         && request.resource.data.dataUrl.size() <= 700000
-        && getAfter(/databases/$(database)/documents/ledger/$(entryId))
-          .data.createdBy == request.auth.uid;
+        && exists(/databases/$(database)/documents/ledger/$(request.resource.data.ledgerId))
+        && (
+          get(/databases/$(database)/documents/ledger/$(request.resource.data.ledgerId)).data.createdBy == request.auth.uid
+          || admin()
+        );
       allow delete: if active()
         && (resource.data.createdBy == request.auth.uid || admin());
     }
