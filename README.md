@@ -2,6 +2,19 @@
 
 A Firebase-based shared accounting ledger with administrator approval.
 
+## Features
+
+- **Multi-user shared ledger** – Track direct debts between users
+- **Admin approval workflow** – New registrations require administrator approval
+- **Multi-currency support** – Admins manage allowed currencies; users set personal conversion rates
+- **Receipt attachments** – Add photos or receipts to ledger entries (compressed to JPEG)
+- **Entry clearing** – Mark entries as cleared to exclude them from balance calculations
+- **Net balance calculation** – See your personal balance across all currencies
+- **Optimized settlement plan** – Minimizes the number of transfers needed
+- **PWA installable** – Add to home screen on supported devices
+- **Offline-capable shell** – App opens offline, but requires connection for data
+- **Bilingual interface** – Switch between English and 中文
+
 ## Run locally
 
 1. The app is configured for the `nyan-split` Firebase project. Enable Google and Anonymous Authentication, plus Firestore, there.
