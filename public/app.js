@@ -338,7 +338,7 @@ function listenerError(context) {
 
 function brand() {
   return `<div class="brand">
-    <p class="brand-mark" aria-hidden="true">🌈🐱</p>
+    <button class="brand-mark" aria-label="${escapeHtml(t('shareInstall'))}" data-view="share">🌈🐱</button>
     <div>
       <h1>NyanSplit</h1>
       <p>${escapeHtml(t('tagline'))}</p>
@@ -900,7 +900,7 @@ function renderSettlementSummary(myBalance) {
     return `<div class="settlement-row">
       <span class="settlement-transfer" aria-label="${escapeHtml(t('settlementTransfer', { debtor, creditor }))}">
         <span class="settlement-name" title="${escapeHtml(debtor)}">${escapeHtml(debtor)}</span>
-        <span class="settlement-arrow" aria-hidden="true">→</span>
+        <span class="settlement-arrow" aria-hidden="true">${escapeHtml(t('transferConnector'))}</span>
         <span class="settlement-name" title="${escapeHtml(creditor)}">${escapeHtml(creditor)}</span>
       </span>
       <strong class="credit">${escapeHtml(formatMoney(settlement.amount, currency))}</strong>
@@ -977,7 +977,7 @@ function renderLedgerRows() {
       </div>`
       : '—';
     return [`<tr class="${cleared ? 'ledger-row-cleared' : ''}">
-    <td class="ledger-mobile-summary">${escapeHtml(debtor)} <span class="settlement-arrow">→</span> ${escapeHtml(creditor)}</td>
+    <td class="ledger-mobile-summary">${escapeHtml(debtor)} <span class="settlement-arrow">${escapeHtml(t('debtConnector'))}</span> ${escapeHtml(creditor)}</td>
     <td class="ledger-user-cell" title="${escapeHtml(debtor)}">${escapeHtml(debtor)}</td>
     <td class="debt-table-connector">${escapeHtml(t('debtConnector'))}</td>
     <td class="ledger-user-cell" title="${escapeHtml(creditor)}">${escapeHtml(creditor)}</td>
@@ -989,11 +989,50 @@ function renderLedgerRows() {
   }).join('');
 }
 
-function renderLedger() {
-  const myBalance = calculateBalances().get(profile.uid) || 0;
+function renderNewEntry() {
   const entryCurrency = settings.defaultCurrency;
   const canAddEntry = activeUsers.length > 1;
   const creditorDefault = activeUsers.find((user) => user.id !== profile.uid)?.id || '';
+
+  return `<section class="page-content narrow-content">
+    <div class="page-heading">
+      <div>
+        <p class="eyebrow">NyanSplit</p>
+        <h2>${escapeHtml(t('newEntry'))}</h2>
+        <p class="muted">${escapeHtml(t('newEntryCurrency', { currency: entryCurrency }))}</p>
+      </div>
+    </div>
+
+    <section class="accounting-card">
+      ${canAddEntry ? `<form id="ledger-form" class="stack-form">
+        <label class="field"><span>${escapeHtml(t('debtor'))}</span><select name="debtorId" aria-label="${escapeHtml(t('debtor'))}">${accountOptions(profile.uid)}</select></label>
+        <span class="debt-connector-inline" aria-hidden="true">${escapeHtml(t('debtConnector'))}</span>
+        <label class="field"><span>${escapeHtml(t('creditor'))}</span><select name="creditorId" aria-label="${escapeHtml(t('creditor'))}">${accountOptions(creditorDefault, profile.uid)}</select></label>
+        <label class="field"><span>${escapeHtml(t('amount'))}</span><input name="amount" type="number" min="0.01" step="0.01" inputmode="decimal" required /></label>
+        <label class="field"><span>${escapeHtml(t('currency'))}</span><select name="currency">${renderCurrencyOptions(entryCurrency)}</select></label>
+        <label class="field"><span>${escapeHtml(t('note'))}</span><input name="note" maxlength="160" placeholder="${escapeHtml(t('notePlaceholder'))}" /></label>
+        <button type="submit">${escapeHtml(t('saveEntry'))}</button>
+      </form>` : `<p class="muted">${escapeHtml(t('needTwoUsers'))}</p>`}
+    </section>
+  </section>`;
+}
+
+function renderConversion() {
+  return `<section class="page-content narrow-content">
+    <div class="page-heading">
+      <div>
+        <p class="eyebrow">NyanSplit</p>
+        <h2>${escapeHtml(t('conversionSettings'))}</h2>
+        <p class="muted">${escapeHtml(t('conversionSettingsHelp'))}</p>
+      </div>
+    </div>
+
+    ${renderCurrencyConversionSettings()}
+  </section>`;
+}
+
+function renderLedger() {
+  const myBalance = calculateBalances().get(profile.uid) || 0;
 
   return `<section class="page-content">
     <div class="page-heading">
@@ -1006,23 +1045,6 @@ function renderLedger() {
 
     <section class="accounting-card ledger-card">
       <div class="card-heading"><div><h3>${escapeHtml(t('ledger'))}</h3><p>${escapeHtml(t('ledgerHelp'))}</p></div></div>
-      <section class="ledger-entry-section">
-        <div class="card-heading">
-          <div>
-            <h3>${escapeHtml(t('newEntry'))}</h3>
-            <p>${escapeHtml(t('newEntryCurrency', { currency: entryCurrency }))}</p>
-          </div>
-        </div>
-        ${canAddEntry ? `<form id="ledger-form" class="ledger-form">
-          <label class="field ledger-person-field"><span class="sr-only">${escapeHtml(t('debtor'))}</span><select name="debtorId" aria-label="${escapeHtml(t('debtor'))}">${accountOptions(profile.uid)}</select></label>
-          <span class="debt-connector" aria-hidden="true">${escapeHtml(t('debtConnector'))}</span>
-          <label class="field ledger-person-field"><span class="sr-only">${escapeHtml(t('creditor'))}</span><select name="creditorId" aria-label="${escapeHtml(t('creditor'))}">${accountOptions(creditorDefault, profile.uid)}</select></label>
-          <label class="field ledger-amount-field"><span>${escapeHtml(t('amount'))}</span><input name="amount" type="number" min="0.01" step="0.01" inputmode="decimal" required /></label>
-          <label class="field ledger-currency-field"><span>${escapeHtml(t('currency'))}</span><select name="currency">${renderCurrencyOptions(entryCurrency)}</select></label>
-          <label class="field field-wide ledger-note-field"><span>${escapeHtml(t('note'))}</span><input name="note" maxlength="160" placeholder="${escapeHtml(t('notePlaceholder'))}" /></label>
-          <button type="submit">${escapeHtml(t('saveEntry'))}</button>
-        </form>` : `<p class="muted">${escapeHtml(t('needTwoUsers'))}</p>`}
-      </section>
       <div class="table-wrap">
         <table class="ledger-table">
           <thead><tr><th class="ledger-mobile-summary-column"></th><th class="ledger-user-column">${escapeHtml(t('debtor'))}</th><th class="ledger-debt-column" aria-label="${escapeHtml(t('debtConnector'))}"></th><th class="ledger-user-column">${escapeHtml(t('creditor'))}</th><th class="ledger-amount-column">${escapeHtml(t('amount'))}</th><th>${escapeHtml(t('note'))}</th><th class="ledger-image-column">${escapeHtml(t('image'))}</th><th>${escapeHtml(t('action'))}</th></tr></thead>
@@ -1032,11 +1054,20 @@ function renderLedger() {
     </section>
 
     ${renderSettlementSummary(myBalance)}
-    ${renderCurrencyConversionSettings()}
   </section>`;
 }
 
 function renderAccount() {
+  const isAdmin = profile.role === 'admin';
+  const adminContent = isAdmin ? `
+    <div class="page-heading" style="margin-top: 2rem;"><div><p class="eyebrow">${escapeHtml(t('settings'))}</p><h2>${escapeHtml(t('settings'))}</h2></div></div>
+    <div class="admin-tabs" role="tablist" aria-label="${escapeHtml(t('settings'))}">
+      <button class="admin-tab${activeAdminTab === 'users' ? ' chosen' : ''}" id="admin-tab-users" type="button" role="tab" aria-controls="admin-panel-users" aria-selected="${String(activeAdminTab === 'users')}" data-admin-tab="users">${escapeHtml(t('users'))}</button>
+      <button class="admin-tab${activeAdminTab === 'currencies' ? ' chosen' : ''}" id="admin-tab-currencies" type="button" role="tab" aria-controls="admin-panel-currencies" aria-selected="${String(activeAdminTab === 'currencies')}" data-admin-tab="currencies">${escapeHtml(t('allowedCurrencies'))}</button>
+    </div>
+    ${activeAdminTab === 'currencies' ? renderAdminCurrencySettings(currentAdminCurrencySettings()) : renderAdminUsers()}
+  ` : '';
+
   return `<section class="page-content narrow-content">
     <div class="page-heading"><div><p class="eyebrow">NyanSplit</p><h2>${escapeHtml(t('account'))}</h2></div></div>
     <section class="accounting-card">
@@ -1052,6 +1083,7 @@ function renderAccount() {
         ${preferenceControls()}
       </div>
     </section>
+    ${adminContent}
     <section class="accounting-card account-signout-card">
       <button class="secondary-button account-signout-button" type="button" data-action="signout">${escapeHtml(t('signOut'))}</button>
     </section>
@@ -1173,9 +1205,11 @@ function renderApplication() {
       ? renderAccount()
       : activeView === 'share'
         ? renderShare()
-        : activeView === 'admin' && profile.role === 'admin'
-          ? renderAdmin()
-          : renderLedger();
+        : activeView === 'add-entry'
+          ? renderNewEntry()
+          : activeView === 'conversion'
+            ? renderConversion()
+            : renderLedger();
 
   root.innerHTML = `<main class="app-shell">
     <aside class="side-panel">
@@ -1186,9 +1220,9 @@ function renderApplication() {
       </section>
     </aside>
     <nav class="app-nav" aria-label="${escapeHtml(t('applicationNavigation'))}">
+      ${navigationItem('add-entry', '➕', t('newEntry'))}
       ${navigationItem('ledger', '🧮', t('accounting'))}
-      ${navigationItem('share', '🔗', t('shareInstall'))}
-      ${profile.role === 'admin' ? navigationItem('admin', '⚙️', t('settings')) : ''}
+      ${navigationItem('conversion', '💱', t('conversionSettings'))}
     </nav>
     <section class="content-panel">
       ${notice ? `<p class="notice" role="alert">${escapeHtml(notice)}</p>` : ''}

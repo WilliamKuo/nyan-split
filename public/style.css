@@ -105,6 +105,22 @@ input[readonly] {
 .brand-mark {
   margin: 0;
   font-size: 2rem;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  color: inherit;
+  font-family: inherit;
+  transition: transform 0.2s ease, opacity 0.2s ease;
+}
+
+.brand-mark:hover {
+  transform: scale(1.1);
+  opacity: 0.8;
+}
+
+.brand-mark:active {
+  transform: scale(0.95);
 }
 
 .brand h1,
@@ -570,7 +586,7 @@ input[readonly] {
 
 .settlement-name {
   display: inline-block;
-  max-width: 8ch;
+  max-width: 10ch;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -579,15 +595,17 @@ input[readonly] {
 
 .settlement-transfer {
   display: inline-grid;
-  grid-template-columns: 8ch auto 8ch;
+  grid-template-columns: 10ch auto 10ch;
   align-items: center;
-  gap: .3rem;
+  column-gap: 0;
   min-width: 0;
 }
 
 .settlement-arrow {
   color: var(--cyan);
   font-weight: 850;
+  padding-left: .5rem;
+  padding-right: .35rem;
 }
 
 .settlement-row strong {
@@ -606,6 +624,16 @@ input[readonly] {
   font-weight: 900;
   line-height: 1;
   white-space: nowrap;
+}
+
+.debt-connector-inline {
+  display: block;
+  text-align: center;
+  padding: .5rem 0;
+  color: var(--cyan);
+  font-size: 1rem;
+  font-weight: 900;
+  line-height: 1;
 }
 
 .debt-table-connector {
@@ -819,7 +847,7 @@ table {
 }
 
 .ledger-amount-column {
-  width: 9ch;
+  width: 12ch;
 }
 
 .ledger-image-column,
@@ -1221,11 +1249,11 @@ html[data-theme="light"] .app-nav {
   }
 
   .settlement-name {
-    max-width: 6ch;
+    max-width: 8ch;
   }
 
   .settlement-transfer {
-    grid-template-columns: 6ch auto 6ch;
+    grid-template-columns: 8ch auto 8ch;
   }
 
   .page-heading {
