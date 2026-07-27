@@ -184,6 +184,31 @@ input[readonly] {
   margin-top: 1.35rem;
 }
 
+.new-entry-form {
+  display: grid;
+  gap: .9rem;
+  margin-top: 1.35rem;
+}
+
+.new-entry-person-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: end;
+  gap: .75rem;
+}
+
+.new-entry-amount-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(6rem, 7rem) auto;
+  align-items: end;
+  gap: .75rem;
+}
+
+.new-entry-camera-button {
+  width: 44px;
+  padding: .6rem;
+}
+
 .field {
   display: grid;
   gap: .38rem;
@@ -683,8 +708,8 @@ input[readonly] {
 }
 
 .allowed-currency-controls {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: end;
   gap: .75rem;
 }
@@ -713,11 +738,12 @@ input[readonly] {
 }
 
 .allowed-currency-controls .field {
-  flex: 1 1 12rem;
+  min-width: 0;
 }
 
 .allowed-currency-controls button {
   min-height: 44px;
+  white-space: nowrap;
 }
 
 .allowed-currency-list {
@@ -1246,6 +1272,36 @@ html[data-theme="light"] .app-nav {
 }
 
 @media (max-width: 500px) {
+  .new-entry-form {
+    gap: .75rem;
+    margin-top: 1rem;
+  }
+
+  .new-entry-person-row {
+    gap: .35rem;
+  }
+
+  .new-entry-amount-row {
+    gap: .5rem;
+  }
+
+  .new-entry-person-row > *,
+  .new-entry-amount-row > * {
+    min-width: 0;
+  }
+
+  .new-entry-person-row select,
+  .new-entry-amount-row input,
+  .new-entry-amount-row select {
+    padding-inline: .5rem;
+  }
+
+  .debt-connector-inline {
+    align-self: end;
+    padding: .75rem 0;
+    font-size: .78rem;
+  }
+
   .auth-card {
     padding: 1.25rem;
   }

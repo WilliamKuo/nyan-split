@@ -11,6 +11,7 @@ import {
   collection,
   deleteDoc,
   doc,
+  getDocs,
   getFirestore,
   onSnapshot,
   query,
@@ -37,6 +38,7 @@ const SETTLEMENT_EPSILON = 0.005;
 const IMAGE_MAX_DIMENSION = 1600;
 const IMAGE_MIN_DIMENSION = 480;
 const IMAGE_MAX_BYTES = 500 * 1024;
+const BATCH_DELETE_LIMIT = 400;
 const JPEG_QUALITIES = [
   .78,
   .68,
@@ -82,6 +84,7 @@ let pendingCurrencyRateDraft = null;
 let selectedLedgerImageEntryId = '';
 let selectedLedgerImageIndex = 0;
 let editingLedgerEntryId = '';
+let isClearingLedgerData = false;
 let pendingLedgerImageFocus = null;
 let seedingCurrencyRates = false;
 let initialCurrencyRatesSeeded = false;
@@ -98,6 +101,7 @@ let appInstalled = window.matchMedia('(display-mode: standalone)').matches
 
 const usdRates = new Map([['USD', 1]]);
 const rateRequests = new Map();
+const unavailablePublicRates = new Set();
 
 window.addEventListener('beforeinstallprompt', (event) => {
   event.preventDefault();
@@ -254,6 +258,12 @@ function publicResultRate(currency, resultCurrency) {
   return relativeRate(usdRates.get(currency), usdRates.get(resultCurrency));
 }
 
+function publicResultRateUnavailable(currency, resultCurrency) {
+  return [currency, resultCurrency].some(
+    (item) => item !== 'USD' && unavailablePublicRates.has(item),
+  );
+}
+
 function captureCurrencyRateDraft(form) {
   const resultCurrency = normalizeCurrency(form?.elements.resultCurrency?.value);
   if (!isAllowedCurrency(resultCurrency)) return;
@@ -272,11 +282,15 @@ function captureCurrencyRateDraft(form) {
 }
 
 function requestPublicResultRate(currency, resultCurrency) {
-  if (currency !== resultCurrency && !usdRates.has(currency)) {
-    void fetchUsdRate(currency).then(render).catch(() => undefined);
+  if (
+    currency !== resultCurrency
+    && !usdRates.has(currency)
+    && !unavailablePublicRates.has(currency)
+  ) {
+    void fetchUsdRate(currency).then(render).catch(render);
   }
-  if (!usdRates.has(resultCurrency)) {
-    void fetchUsdRate(resultCurrency).then(render).catch(() => undefined);
+  if (!usdRates.has(resultCurrency) && !unavailablePublicRates.has(resultCurrency)) {
+    void fetchUsdRate(resultCurrency).then(render).catch(render);
   }
 }
 
@@ -289,7 +303,8 @@ function resultRate(currency, resultCurrency) {
   if (isPositiveRate(personalRate)) return personalRate;
 
   requestPublicResultRate(sourceCurrency, resultCurrency);
-  return publicResultRate(sourceCurrency, resultCurrency);
+  return publicResultRate(sourceCurrency, resultCurrency)
+    || (publicResultRateUnavailable(sourceCurrency, resultCurrency) ? 1 : null);
 }
 
 function amountInResultCurrency(entry, resultCurrency) {
@@ -520,7 +535,12 @@ async function fetchUsdRate(currency, forceRefresh = false) {
         throw new Error(`No USD exchange rate was returned for ${currency}.`);
       }
       usdRates.set(currency, rate);
+      unavailablePublicRates.delete(currency);
       return rate;
+    })
+    .catch((error) => {
+      unavailablePublicRates.add(currency);
+      throw error;
     })
     .finally(() => rateRequests.delete(currency));
 
@@ -837,14 +857,15 @@ function renderCurrencyConversionSettings() {
     .map((currency) => {
       requestPublicResultRate(currency, resultCurrency);
       const publicRate = publicResultRate(currency, resultCurrency);
+      const useFallbackRate = publicResultRateUnavailable(currency, resultCurrency);
       const hasDraftRate = rateDraft
         && Object.prototype.hasOwnProperty.call(rateDraft, currency);
       const savedRate = hasDraftRate
         ? rateDraft[currency]
-        : personalRates[currency] || '';
+        : personalRates[currency] || (useFallbackRate ? '1' : '');
       const placeholder = publicRate
         ? formatRate(publicRate)
-        : t('publicRateLoading');
+        : useFallbackRate ? '1' : t('publicRateLoading');
       return `<tr>
       <td><strong>${escapeHtml(currency)}</strong></td>
       <td>
@@ -1010,12 +1031,21 @@ function renderNewEntry() {
     </div>
 
     <section class="accounting-card">
-      ${canAddEntry ? `<form id="ledger-form" class="stack-form">
-        <label class="field"><span>${escapeHtml(t('debtor'))}</span><select name="debtorId" aria-label="${escapeHtml(t('debtor'))}">${accountOptions(profile.uid)}</select></label>
-        <span class="debt-connector-inline" aria-hidden="true">${escapeHtml(t('debtConnector'))}</span>
-        <label class="field"><span>${escapeHtml(t('creditor'))}</span><select name="creditorId" aria-label="${escapeHtml(t('creditor'))}">${accountOptions(creditorDefault, profile.uid)}</select></label>
-        <label class="field"><span>${escapeHtml(t('amount'))}</span><input name="amount" type="number" min="0.01" step="0.01" inputmode="decimal" required /></label>
-        <label class="field"><span>${escapeHtml(t('currency'))}</span><select name="currency">${renderCurrencyOptions(entryCurrency)}</select></label>
+      ${canAddEntry ? `<form id="ledger-form" class="new-entry-form">
+        <div class="new-entry-person-row">
+          <label class="field"><span>${escapeHtml(t('debtor'))}</span><select name="debtorId" aria-label="${escapeHtml(t('debtor'))}">${accountOptions(profile.uid)}</select></label>
+          <span class="debt-connector-inline" aria-hidden="true">${escapeHtml(t('debtConnector'))}</span>
+          <label class="field"><span>${escapeHtml(t('creditor'))}</span><select name="creditorId" aria-label="${escapeHtml(t('creditor'))}">${accountOptions(creditorDefault, profile.uid)}</select></label>
+        </div>
+        <div class="new-entry-amount-row">
+          <label class="field"><span>${escapeHtml(t('amount'))}</span><input name="amount" type="number" min="0.01" step="0.01" inputmode="decimal" required /></label>
+          <label class="field"><span>${escapeHtml(t('currency'))}</span><select name="currency">${renderCurrencyOptions(entryCurrency)}</select></label>
+          <label class="file-picker new-entry-camera-button" title="${escapeHtml(t('takePhoto'))}">
+            <input class="sr-only" name="entryImageCamera" type="file" accept="image/*" capture="environment" />
+            <span aria-hidden="true">📷</span>
+            <span class="sr-only">${escapeHtml(t('takePhoto'))}</span>
+          </label>
+        </div>
         <label class="field"><span>${escapeHtml(t('note'))}</span><input name="note" maxlength="160" placeholder="${escapeHtml(t('notePlaceholder'))}" /></label>
         <button type="submit">${escapeHtml(t('saveEntry'))}</button>
       </form>` : `<p class="muted">${escapeHtml(t('needTwoUsers'))}</p>`}
@@ -1067,6 +1097,7 @@ function renderAccount() {
   const isAdmin = profile.role === 'admin';
   const adminContent = isAdmin ? `
     ${renderAdminUsers()}
+    ${renderAdminLedgerData()}
     ${renderAdminCurrencySettings(currentAdminCurrencySettings())}
   ` : '';
 
@@ -1180,6 +1211,23 @@ function renderAdminUsers() {
         <thead><tr><th>${escapeHtml(t('user'))}</th><th>${escapeHtml(t('status'))}</th><th>${escapeHtml(t('actions'))}</th></tr></thead>
         <tbody>${renderUserRows()}</tbody>
       </table></div>
+    </section>`;
+}
+
+function renderAdminLedgerData() {
+  return `<section class="accounting-card">
+      <div class="card-heading">
+        <div>
+          <h3>${escapeHtml(t('ledgerData'))}</h3>
+          <p>${escapeHtml(t('clearAllLedgerDataHelp'))}</p>
+        </div>
+      </div>
+      <button
+        class="secondary-button danger-text"
+        type="button"
+        data-action="clear-all-ledger-data"
+        ${isClearingLedgerData ? 'disabled' : ''}
+      >${escapeHtml(t(isClearingLedgerData ? 'clearingLedgerData' : 'clearAllLedgerData'))}</button>
     </section>`;
 }
 
@@ -1342,6 +1390,10 @@ function bind() {
   document.querySelectorAll('[data-remove-user]').forEach((button) => {
     button.onclick = () => removeUser(button.dataset.removeUser);
   });
+  document.querySelector('[data-action="clear-all-ledger-data"]')?.addEventListener(
+    'click',
+    clearAllLedgerData,
+  );
   document.querySelectorAll('[data-edit-entry]').forEach((button) => {
     button.onclick = () => {
       editingLedgerEntryId = button.dataset.editEntry;
@@ -1577,6 +1629,7 @@ async function addLedgerEntry(event) {
     const amount = Number(form.get('amount'));
     const currency = normalizeCurrency(form.get('currency'));
     const note = String(form.get('note') || '').trim().slice(0, 160);
+    const imageFile = form.get('entryImageCamera');
     if (!debtorId || !creditorId || debtorId === creditorId) {
       setNotice(t('differentPeople'));
       return;
@@ -1602,6 +1655,14 @@ async function addLedgerEntry(event) {
       note,
     });
     formElement.reset();
+    if (imageFile instanceof File && imageFile.size > 0) {
+      const imageAdded = await addLedgerImage(
+        ledgerReference.id,
+        imageFile,
+        { createdBy: profile.uid },
+      );
+      if (!imageAdded) return;
+    }
     setNotice(t('entryAdded'));
   } catch (error) {
     reportError(error);
@@ -1647,12 +1708,11 @@ async function updateLedgerEntry(event) {
   }
 }
 
-async function addLedgerImage(entryId, file) {
-  const entry = ledgerEntryById(entryId);
-  if (!entry || !canManageEntry(entry)) return;
+async function addLedgerImage(entryId, file, entry = ledgerEntryById(entryId)) {
+  if (!entry || !canManageEntry(entry)) return false;
   if (!file.type.startsWith('image/')) {
     setNotice(t('imageUnsupported'));
-    return;
+    return false;
   }
 
   try {
@@ -1669,11 +1729,13 @@ async function addLedgerImage(entryId, file) {
       imageId: imageReference.id,
     };
     setNotice(t('imageAdded'));
+    return true;
   } catch (error) {
     console.warn('Could not add the ledger image.', error);
     setNotice(error.message === 'The selected image is too large.'
       ? t('imageTooLarge')
       : t('operationFailed'));
+    return false;
   }
 }
 
@@ -1794,6 +1856,46 @@ async function removeUser(userId) {
     setNotice(t('userRemoved'));
   } catch (error) {
     reportError(error);
+  }
+}
+
+async function deleteCollectionDocuments(collectionName) {
+  const snapshot = await getDocs(collection(db, collectionName));
+
+  for (let index = 0; index < snapshot.docs.length; index += BATCH_DELETE_LIMIT) {
+    const batch = writeBatch(db);
+    snapshot.docs
+      .slice(index, index + BATCH_DELETE_LIMIT)
+      .forEach((item) => batch.delete(item.ref));
+    await batch.commit();
+  }
+
+  return snapshot.docs.length;
+}
+
+async function clearAllLedgerData() {
+  if (profile?.role !== 'admin' || isClearingLedgerData) return;
+  if (!window.confirm(t('clearAllLedgerDataConfirm'))) return;
+  if (!window.confirm(t('clearAllLedgerDataFinalConfirm'))) return;
+
+  isClearingLedgerData = true;
+  render();
+
+  try {
+    const entriesRemoved = await deleteCollectionDocuments('ledger');
+    const imagesRemoved = await deleteCollectionDocuments('ledgerImages');
+    selectedLedgerImageEntryId = '';
+    selectedLedgerImageIndex = 0;
+    editingLedgerEntryId = '';
+    setNotice(t('allLedgerDataCleared', {
+      entries: entriesRemoved,
+      images: imagesRemoved,
+    }));
+  } catch (error) {
+    reportError(error);
+  } finally {
+    isClearingLedgerData = false;
+    render();
   }
 }
 
