@@ -79,6 +79,7 @@ let ledgerEntries = [];
 let ledgerFilter = '';
 let ledgerImages = new Map();
 let activeUsers = [];
+let calculatedSettlements = null;
 let notice = '';
 let noticeType = 'info';
 let activeView = 'ledger';
@@ -306,8 +307,7 @@ function resultRate(currency, resultCurrency) {
   if (isPositiveRate(personalRate)) return personalRate;
 
   requestPublicResultRate(sourceCurrency, resultCurrency);
-  return publicResultRate(sourceCurrency, resultCurrency)
-    || (publicResultRateUnavailable(sourceCurrency, resultCurrency) ? 1 : null);
+  return publicResultRate(sourceCurrency, resultCurrency);
 }
 
 function amountInResultCurrency(entry, resultCurrency) {
@@ -316,6 +316,29 @@ function amountInResultCurrency(entry, resultCurrency) {
   const rate = resultRate(sourceCurrency, resultCurrency);
   if (!Number.isFinite(amount) || amount <= 0 || !isPositiveRate(rate)) return null;
   return amount * rate;
+}
+
+function clearCalculatedSettlements() {
+  calculatedSettlements = null;
+}
+
+function unavailableLedgerRateCurrencies(resultCurrency) {
+  const unavailableCurrencies = new Set();
+
+  ledgerEntries.forEach((entry) => {
+    if (entry.cleared) return;
+
+    const sourceCurrency = normalizeCurrency(entry.currency) || DEFAULT_CURRENCY;
+    if (
+      sourceCurrency !== resultCurrency
+      && !isPositiveRate(resultRate(sourceCurrency, resultCurrency))
+      && publicResultRateUnavailable(sourceCurrency, resultCurrency)
+    ) {
+      unavailableCurrencies.add(sourceCurrency);
+    }
+  });
+
+  return [...unavailableCurrencies].sort();
 }
 
 function formatRate(rate) {
@@ -356,7 +379,10 @@ function reportError(error) {
 }
 
 function listenerError(context) {
-  return (error) => reportError(new Error(`${context}: ${error.message}`));
+  return (error) => {
+    finishInitialLoading();
+    reportError(new Error(`${context}: ${error.message}`));
+  };
 }
 
 function brand() {
@@ -427,6 +453,7 @@ function renderRegistration() {
     <button class="text-button" type="button" data-action="signout">${escapeHtml(t('signOut'))}</button>
   `);
   bind();
+  finishInitialLoading();
 }
 
 function renderPending() {
@@ -438,6 +465,7 @@ function renderPending() {
     <button class="text-button" type="button" data-action="signout">${escapeHtml(t('signOut'))}</button>
   `);
   bind();
+  finishInitialLoading();
 }
 
 function calculateBalances() {
@@ -529,6 +557,11 @@ function calculateSettlementPlan() {
   return bestSettlements || [];
 }
 
+function calculateSuggestedTransfers() {
+  calculatedSettlements = calculateSettlementPlan();
+  render();
+}
+
 async function fetchUsdRate(currency, forceRefresh = false) {
   if (currency === 'USD') return 1;
   if (!forceRefresh && usdRates.has(currency)) return usdRates.get(currency);
@@ -544,10 +577,12 @@ async function fetchUsdRate(currency, forceRefresh = false) {
       }
       usdRates.set(currency, rate);
       unavailablePublicRates.delete(currency);
+      clearCalculatedSettlements();
       return rate;
     })
     .catch((error) => {
       unavailablePublicRates.add(currency);
+      clearCalculatedSettlements();
       throw error;
     })
     .finally(() => rateRequests.delete(currency));
@@ -865,15 +900,15 @@ function renderCurrencyConversionSettings() {
     .map((currency) => {
       requestPublicResultRate(currency, resultCurrency);
       const publicRate = publicResultRate(currency, resultCurrency);
-      const useFallbackRate = publicResultRateUnavailable(currency, resultCurrency);
+      const rateUnavailable = publicResultRateUnavailable(currency, resultCurrency);
       const hasDraftRate = rateDraft
         && Object.prototype.hasOwnProperty.call(rateDraft, currency);
       const savedRate = hasDraftRate
         ? rateDraft[currency]
-        : personalRates[currency] || (useFallbackRate ? '1' : '');
+        : personalRates[currency] || '';
       const placeholder = publicRate
         ? formatRate(publicRate)
-        : useFallbackRate ? '1' : t('publicRateLoading');
+        : rateUnavailable ? t('publicRateUnavailable') : t('publicRateLoading');
       return `<tr>
       <td><strong>${escapeHtml(currency)}</strong></td>
       <td>
@@ -909,7 +944,13 @@ function renderCurrencyConversionSettings() {
 function renderSettlementSummary(myBalance) {
   const currency = profileCurrency();
   const balances = calculateBalances();
-  const settlements = calculateSettlementPlan();
+  const settlements = calculatedSettlements;
+  const unavailableCurrencies = unavailableLedgerRateCurrencies(currency);
+  const exchangeRateWarning = unavailableCurrencies.length
+    ? t('exchangeRatesUnavailableWarning', {
+      currencies: unavailableCurrencies.join(', '),
+    })
+    : '';
   const balanceRows = activeUsers.map((user) => {
     const amount = balances.get(user.id) || 0;
     const balanceClass = amount > SETTLEMENT_EPSILON
@@ -922,7 +963,7 @@ function renderSettlementSummary(myBalance) {
       <strong class="${balanceClass}">${escapeHtml(formatSettlementAmount(amount, currency))}</strong>
     </div>`;
   }).join('');
-  const settlementRows = settlements.map((settlement) => {
+  const settlementRows = (settlements || []).map((settlement) => {
     const debtor = userAlias(activeUsers.find((user) => user.id === settlement.debtorId));
     const creditor = userAlias(activeUsers.find((user) => user.id === settlement.creditorId));
     return `<div class="settlement-row">
@@ -934,6 +975,9 @@ function renderSettlementSummary(myBalance) {
       <strong class="credit">${escapeHtml(formatMoney(settlement.amount, currency))}</strong>
     </div>`;
   }).join('');
+  const settlementTransferContent = settlements === null
+    ? `<p class="muted">${escapeHtml(t('settlementCalculationHelp'))}</p><button type="button" data-action="calculate-settlements">${escapeHtml(t('calculateSettlements'))}</button>`
+    : settlementRows || `<p class="muted">${escapeHtml(t('settlementNoTransfers'))}</p>`;
 
   const helpText = t('settlementSummaryHelp', { currency: `<strong class="highlight-currency">${escapeHtml(currency)}</strong>` });
   
@@ -944,6 +988,7 @@ function renderSettlementSummary(myBalance) {
         <p>${helpText}</p>
       </div>
     </div>
+    ${exchangeRateWarning ? `<p class="notice notice-error" role="alert">${escapeHtml(exchangeRateWarning)}</p>` : ''}
     <section class="result-card settlement-result-card" aria-label="${escapeHtml(t('myResult'))}">
       <p>${escapeHtml(t('myResult'))}</p>
       <strong class="${myBalance > SETTLEMENT_EPSILON ? 'credit' : myBalance < -SETTLEMENT_EPSILON ? 'debt' : ''}">${escapeHtml(resultCopy(myBalance, currency))}</strong>
@@ -955,7 +1000,7 @@ function renderSettlementSummary(myBalance) {
       </section>
       <section>
         <h4>${escapeHtml(t('settlementTransfers'))}</h4>
-        <div class="settlement-list">${settlementRows || `<p class="muted">${escapeHtml(t('settlementNoTransfers'))}</p>`}</div>
+        <div class="settlement-list">${settlementTransferContent}</div>
       </section>
     </div>
   </section>`;
@@ -1056,6 +1101,14 @@ function renderLedgerRows(entries = ledgerEntries) {
   }).join('');
 }
 
+function refreshLedgerRows() {
+  const rows = document.querySelector('#ledger-rows');
+  if (!rows) return;
+
+  rows.innerHTML = renderLedgerRows(filteredLedgerEntries());
+  bindLedgerRows();
+}
+
 function renderNewEntry() {
   const entryCurrency = settings.defaultCurrency;
   const canAddEntry = activeUsers.length > 1;
@@ -1128,7 +1181,7 @@ function renderLedger() {
       <div class="table-wrap">
         <table class="ledger-table">
           <thead><tr><th class="ledger-mobile-summary-column"></th><th class="ledger-user-column">${escapeHtml(t('debtor'))}</th><th class="ledger-debt-column" aria-label="${escapeHtml(t('debtConnector'))}"></th><th class="ledger-user-column">${escapeHtml(t('creditor'))}</th><th class="ledger-amount-column">${escapeHtml(t('amount'))}</th><th>${escapeHtml(t('currency'))}</th><th>${escapeHtml(t('note'))}</th><th class="ledger-image-column">${escapeHtml(t('image'))}</th><th>${escapeHtml(t('creator'))}</th><th>${escapeHtml(t('action'))}</th></tr></thead>
-          <tbody>${renderLedgerRows(filteredLedgerEntries())}</tbody>
+          <tbody id="ledger-rows">${renderLedgerRows(filteredLedgerEntries())}</tbody>
         </table>
       </div>
     </section>
@@ -1310,6 +1363,7 @@ function renderApplication() {
     </section>
   </main>`;
   bind();
+  finishInitialLoading();
   if (activeView === 'share') void renderShareQr();
 }
 
@@ -1325,6 +1379,7 @@ function render() {
       ${appVersion ? `<p class="app-version" style="margin-top: 2rem; font-size: 0.875rem; opacity: 0.6;">${escapeHtml(appVersion)}</p>` : ''}
     `);
     bind();
+    finishInitialLoading();
     return;
   }
 
@@ -1345,6 +1400,59 @@ function render() {
   }
 
   renderApplication();
+}
+
+function bindLedgerFilter() {
+  const filterInput = document.querySelector('#ledger-filter');
+  if (!filterInput) return;
+
+  filterInput.addEventListener('input', (event) => {
+    ledgerFilter = event.currentTarget.value;
+    if (!event.isComposing) refreshLedgerRows();
+  });
+  filterInput.addEventListener('compositionend', (event) => {
+    ledgerFilter = event.currentTarget.value;
+    refreshLedgerRows();
+  });
+}
+
+function bindLedgerRows() {
+  const ledgerEditForm = document.querySelector('#ledger-edit-form');
+  ledgerEditForm?.addEventListener('submit', updateLedgerEntry);
+  ledgerEditForm?.elements.debtorId?.addEventListener('change', updateCreditorOptions);
+  document.querySelectorAll('[data-edit-entry]').forEach((button) => {
+    button.onclick = () => {
+      editingLedgerEntryId = button.dataset.editEntry;
+      selectedLedgerImageEntryId = '';
+      selectedLedgerImageIndex = 0;
+      notice = '';
+      render();
+    };
+  });
+  document.querySelectorAll('[data-cancel-edit-entry]').forEach((button) => {
+    button.onclick = () => {
+      editingLedgerEntryId = '';
+      render();
+    };
+  });
+  document.querySelectorAll('[data-delete-entry]').forEach((button) => {
+    button.onclick = () => {
+      if (confirm(t('deleteEntryConfirm'))) {
+        removeLedgerEntry(button.dataset.deleteEntry);
+      }
+    };
+  });
+  document.querySelectorAll('[data-toggle-clear-entry]').forEach((button) => {
+    button.onclick = () => toggleLedgerEntryCleared(button.dataset.toggleClearEntry);
+  });
+  document.querySelectorAll('[data-view-ledger-image]').forEach((button) => {
+    button.onclick = () => {
+      selectedLedgerImageEntryId = button.dataset.viewLedgerImage;
+      selectedLedgerImageIndex = 0;
+      editingLedgerEntryId = '';
+      render();
+    };
+  });
 }
 
 function bind() {
@@ -1399,17 +1507,8 @@ function bind() {
   const ledgerForm = document.querySelector('#ledger-form');
   ledgerForm?.addEventListener('submit', addLedgerEntry);
   ledgerForm?.elements.debtorId?.addEventListener('change', updateCreditorOptions);
-  document.querySelector('#ledger-filter')?.addEventListener('input', (event) => {
-    ledgerFilter = event.currentTarget.value;
-    const cursorPosition = event.currentTarget.selectionStart ?? ledgerFilter.length;
-    render();
-    const filterInput = document.querySelector('#ledger-filter');
-    filterInput?.focus();
-    filterInput?.setSelectionRange(cursorPosition, cursorPosition);
-  });
-  const ledgerEditForm = document.querySelector('#ledger-edit-form');
-  ledgerEditForm?.addEventListener('submit', updateLedgerEntry);
-  ledgerEditForm?.elements.debtorId?.addEventListener('change', updateCreditorOptions);
+  bindLedgerFilter();
+  bindLedgerRows();
   document.querySelector('#currency-result-currency')?.addEventListener('change', (event) => {
     const resultCurrency = normalizeCurrency(event.currentTarget.value);
     if (!isAllowedCurrency(resultCurrency)) return;
@@ -1446,39 +1545,6 @@ function bind() {
     'click',
     clearAllLedgerData,
   );
-  document.querySelectorAll('[data-edit-entry]').forEach((button) => {
-    button.onclick = () => {
-      editingLedgerEntryId = button.dataset.editEntry;
-      selectedLedgerImageEntryId = '';
-      selectedLedgerImageIndex = 0;
-      notice = '';
-      render();
-    };
-  });
-  document.querySelectorAll('[data-cancel-edit-entry]').forEach((button) => {
-    button.onclick = () => {
-      editingLedgerEntryId = '';
-      render();
-    };
-  });
-  document.querySelectorAll('[data-delete-entry]').forEach((button) => {
-    button.onclick = () => {
-      if (confirm(t('deleteEntryConfirm'))) {
-        removeLedgerEntry(button.dataset.deleteEntry);
-      }
-    };
-  });
-  document.querySelectorAll('[data-toggle-clear-entry]').forEach((button) => {
-    button.onclick = () => toggleLedgerEntryCleared(button.dataset.toggleClearEntry);
-  });
-  document.querySelectorAll('[data-view-ledger-image]').forEach((button) => {
-    button.onclick = () => {
-      selectedLedgerImageEntryId = button.dataset.viewLedgerImage;
-      selectedLedgerImageIndex = 0;
-      editingLedgerEntryId = '';
-      render();
-    };
-  });
   document.querySelector('.ledger-image-view')?.addEventListener('click', (event) => {
     if (event.target.closest('[data-action="ledger-image-prev"]:not([disabled])')) {
       if (selectedLedgerImageIndex > 0) {
@@ -1516,6 +1582,10 @@ function bind() {
   });
   document.querySelector('[data-action="copy-share-url"]')?.addEventListener('click', copyShareUrl);
   document.querySelector('[data-action="install-app"]')?.addEventListener('click', installApp);
+  document.querySelector('[data-action="calculate-settlements"]')?.addEventListener(
+    'click',
+    calculateSuggestedTransfers,
+  );
 }
 
 async function renderShareQr() {
@@ -1995,6 +2065,7 @@ function stopActiveListeners() {
   ledgerEntries = [];
   ledgerImages = new Map();
   activeUsers = [];
+  clearCalculatedSettlements();
 }
 
 function watchActiveData() {
@@ -2004,6 +2075,7 @@ function watchActiveData() {
     : query(collection(db, 'users'), where('status', '==', 'active'));
 
   stopUsers = onSnapshot(usersSource, (snapshot) => {
+    clearCalculatedSettlements();
     activeUsers = snapshot.docs
       .map((item) => ({
         id: item.id,
@@ -2014,6 +2086,7 @@ function watchActiveData() {
   }, listenerError('Users'));
 
   stopLedger = onSnapshot(collection(db, 'ledger'), (snapshot) => {
+    clearCalculatedSettlements();
     ledgerEntries = snapshot.docs
       .map((item) => ({
         id: item.id,
@@ -2105,15 +2178,15 @@ async function fetchVersion() {
 void fetchVersion();
 
 function finishInitialLoading() {
-  loadingOverlay.hidden = true;
+  if (loadingOverlay) loadingOverlay.hidden = true;
 }
 
 onAuthStateChanged(auth, (user) => {
-  finishInitialLoading();
   clearAllListeners();
   authUser = user;
   profile = null;
   activeView = 'ledger';
+  ledgerFilter = '';
   notice = '';
   settings = defaultSettings();
   adminCurrencySettings = null;
@@ -2125,7 +2198,10 @@ onAuthStateChanged(auth, (user) => {
     return;
   }
 
+  render();
+
   stopSettings = onSnapshot(settingsReference, (snapshot) => {
+    clearCalculatedSettlements();
     const nextSettings = snapshot.exists() ? snapshot.data() : {};
     settings = normalizeSettings(nextSettings);
     adminCurrencySettings = null;
@@ -2136,6 +2212,7 @@ onAuthStateChanged(auth, (user) => {
   }, listenerError('App settings'));
 
   stopProfile = onSnapshot(doc(db, 'users', user.uid), (snapshot) => {
+    clearCalculatedSettlements();
     if (!snapshot.exists()) {
       profile = {
         uid: user.uid,
