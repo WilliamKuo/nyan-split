@@ -1,4 +1,4 @@
-const CACHE_NAME = 'nyan-split-v1.2.2-rc';
+const CACHE_NAME = 'nyan-split-v1.1.0';
 const APP_SHELL = [
   './',
   './index.html',
