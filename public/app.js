@@ -30,6 +30,7 @@ const auth = getAuth(app);
 const db = getFirestore(app);
 const google = new GoogleAuthProvider();
 const root = document.querySelector('#root');
+const loadingOverlay = document.querySelector('#loading-overlay');
 const settingsReference = doc(db, 'settings', 'app');
 
 const DEFAULT_CURRENCY = 'TWD';
@@ -75,9 +76,11 @@ let profile = null;
 let settings = defaultSettings();
 let adminCurrencySettings = null;
 let ledgerEntries = [];
+let ledgerFilter = '';
 let ledgerImages = new Map();
 let activeUsers = [];
 let notice = '';
+let noticeType = 'info';
 let activeView = 'ledger';
 let pendingResultCurrency = '';
 let pendingCurrencyRateDraft = null;
@@ -337,14 +340,19 @@ function createdAtValue(entry) {
   return entry.createdAt?.toMillis?.() || 0;
 }
 
-function setNotice(message = '') {
+function setNotice(message = '', type = 'info') {
   notice = message;
+  noticeType = type;
   render();
+}
+
+function setErrorNotice(message) {
+  setNotice(message, 'error');
 }
 
 function reportError(error) {
   console.error(error);
-  setNotice(t('operationFailed'));
+  setErrorNotice(t('operationFailed'));
 }
 
 function listenerError(context) {
@@ -374,7 +382,7 @@ function authFrame(content) {
     <section class="auth-card">
       ${preferenceControls()}
       ${brand()}
-      ${notice ? `<p class="notice" role="alert">${escapeHtml(notice)}</p>` : ''}
+      ${notice ? `<p class="notice notice-${noticeType}" role="${noticeType === 'error' ? 'alert' : 'status'}">${escapeHtml(notice)}</p>` : ''}
       ${content}
     </section>
   </main>`;
@@ -960,13 +968,17 @@ function renderLedgerEntryEdit(entry) {
 
   return `<tr class="ledger-row-editing">
     <td colspan="10">
-      <form id="ledger-edit-form" class="ledger-form ledger-edit-form">
-        <label class="field ledger-person-field"><span class="sr-only">${escapeHtml(t('debtor'))}</span><select name="debtorId" aria-label="${escapeHtml(t('debtor'))}">${accountOptions(debtorId)}</select></label>
-        <span class="debt-connector" aria-hidden="true">${escapeHtml(t('debtConnector'))}</span>
-        <label class="field ledger-person-field"><span class="sr-only">${escapeHtml(t('creditor'))}</span><select name="creditorId" aria-label="${escapeHtml(t('creditor'))}">${accountOptions(creditorId, debtorId)}</select></label>
-        <label class="field ledger-amount-field"><span>${escapeHtml(t('amount'))}</span><input name="amount" type="number" min="0.01" step="0.01" inputmode="decimal" value="${escapeHtml(String(entry.amount ?? ''))}" required /></label>
-        <label class="field ledger-currency-field"><span>${escapeHtml(t('currency'))}</span><select name="currency">${renderCurrencyOptions(currency)}</select></label>
-        <label class="field field-wide ledger-note-field"><span>${escapeHtml(t('note'))}</span><input name="note" maxlength="160" value="${escapeHtml(entry.note || '')}" placeholder="${escapeHtml(t('notePlaceholder'))}" /></label>
+      <form id="ledger-edit-form" class="ledger-edit-form">
+        <div class="ledger-edit-person-row">
+          <label class="field"><span>${escapeHtml(t('debtor'))}</span><select name="debtorId" aria-label="${escapeHtml(t('debtor'))}">${accountOptions(debtorId)}</select></label>
+          <span class="debt-connector-inline" aria-hidden="true">${escapeHtml(t('debtConnector'))}</span>
+          <label class="field"><span>${escapeHtml(t('creditor'))}</span><select name="creditorId" aria-label="${escapeHtml(t('creditor'))}">${accountOptions(creditorId, debtorId)}</select></label>
+        </div>
+        <div class="ledger-edit-amount-row">
+          <label class="field ledger-edit-amount-field"><span>${escapeHtml(t('amount'))}</span><input name="amount" type="number" min="0.01" step="0.01" inputmode="decimal" value="${escapeHtml(String(entry.amount ?? ''))}" required /></label>
+          <label class="field"><span>${escapeHtml(t('currency'))}</span><select name="currency">${renderCurrencyOptions(currency)}</select></label>
+        </div>
+        <label class="field ledger-edit-note-field"><span>${escapeHtml(t('note'))}</span><input name="note" maxlength="160" value="${escapeHtml(entry.note || '')}" placeholder="${escapeHtml(t('notePlaceholder'))}" /></label>
         <div class="ledger-edit-actions">
           <button type="submit">${escapeHtml(t('saveChanges'))}</button>
           <button class="secondary-button" type="button" data-cancel-edit-entry="${escapeHtml(entry.id)}">${escapeHtml(t('cancel'))}</button>
@@ -976,12 +988,40 @@ function renderLedgerEntryEdit(entry) {
   </tr>`;
 }
 
-function renderLedgerRows() {
-  if (!ledgerEntries.length) {
-    return `<tr><td class="empty-cell" colspan="10">${escapeHtml(t('noEntries'))}</td></tr>`;
+function filteredLedgerEntries() {
+  const filter = ledgerFilter.trim().toLocaleLowerCase();
+  if (!filter) return ledgerEntries;
+
+  return ledgerEntries.filter((entry) => {
+    const debtorId = entry.debtorId || entry.owedBy;
+    const creditorId = entry.creditorId || entry.paidBy;
+    const debtor = userAlias(activeUsers.find((user) => user.id === debtorId));
+    const creditor = userAlias(activeUsers.find((user) => user.id === creditorId));
+    const creator = entry.createdBy
+      ? userAlias(activeUsers.find((user) => user.id === entry.createdBy))
+      : '';
+    const amount = Number(entry.amount);
+    const searchText = [
+      debtor,
+      creditor,
+      Number.isFinite(amount) ? String(amount) : '',
+      Number.isFinite(amount) ? amount.toFixed(2) : '',
+      entry.currency || DEFAULT_CURRENCY,
+      entry.note || '',
+      creator,
+    ].join(' ').toLocaleLowerCase();
+
+    return searchText.includes(filter);
+  });
+}
+
+function renderLedgerRows(entries = ledgerEntries) {
+  if (!entries.length) {
+    const message = ledgerEntries.length ? 'noMatchingEntries' : 'noEntries';
+    return `<tr><td class="empty-cell" colspan="10">${escapeHtml(t(message))}</td></tr>`;
   }
 
-  return ledgerEntries.flatMap((entry) => {
+  return entries.flatMap((entry) => {
     if (editingLedgerEntryId === entry.id) {
       return [renderLedgerEntryEdit(entry)];
     }
@@ -1081,10 +1121,14 @@ function renderLedger() {
 
     <section class="accounting-card ledger-card">
       <div class="card-heading"><div><h3>${escapeHtml(t('ledger'))}</h3><p>${escapeHtml(t('ledgerHelp'))}</p></div></div>
+      <label class="field ledger-filter">
+        <span class="sr-only">${escapeHtml(t('ledgerSearch'))}</span>
+        <input id="ledger-filter" type="search" value="${escapeHtml(ledgerFilter)}" placeholder="${escapeHtml(t('ledgerSearchPlaceholder'))}" aria-label="${escapeHtml(t('ledgerSearch'))}" autocomplete="off" />
+      </label>
       <div class="table-wrap">
         <table class="ledger-table">
           <thead><tr><th class="ledger-mobile-summary-column"></th><th class="ledger-user-column">${escapeHtml(t('debtor'))}</th><th class="ledger-debt-column" aria-label="${escapeHtml(t('debtConnector'))}"></th><th class="ledger-user-column">${escapeHtml(t('creditor'))}</th><th class="ledger-amount-column">${escapeHtml(t('amount'))}</th><th>${escapeHtml(t('currency'))}</th><th>${escapeHtml(t('note'))}</th><th class="ledger-image-column">${escapeHtml(t('image'))}</th><th>${escapeHtml(t('creator'))}</th><th>${escapeHtml(t('action'))}</th></tr></thead>
-          <tbody>${renderLedgerRows()}</tbody>
+          <tbody>${renderLedgerRows(filteredLedgerEntries())}</tbody>
         </table>
       </div>
     </section>
@@ -1261,7 +1305,7 @@ function renderApplication() {
       ${appVersion ? `<p class="app-version">${escapeHtml(appVersion)}</p>` : ''}
     </nav>
     <section class="content-panel">
-      ${notice ? `<p class="notice" role="alert">${escapeHtml(notice)}</p>` : ''}
+      ${notice ? `<p class="notice notice-${noticeType}" role="${noticeType === 'error' ? 'alert' : 'status'}">${escapeHtml(notice)}</p>` : ''}
       ${content}
     </section>
   </main>`;
@@ -1355,6 +1399,14 @@ function bind() {
   const ledgerForm = document.querySelector('#ledger-form');
   ledgerForm?.addEventListener('submit', addLedgerEntry);
   ledgerForm?.elements.debtorId?.addEventListener('change', updateCreditorOptions);
+  document.querySelector('#ledger-filter')?.addEventListener('input', (event) => {
+    ledgerFilter = event.currentTarget.value;
+    const cursorPosition = event.currentTarget.selectionStart ?? ledgerFilter.length;
+    render();
+    const filterInput = document.querySelector('#ledger-filter');
+    filterInput?.focus();
+    filterInput?.setSelectionRange(cursorPosition, cursorPosition);
+  });
   const ledgerEditForm = document.querySelector('#ledger-edit-form');
   ledgerEditForm?.addEventListener('submit', updateLedgerEntry);
   ledgerEditForm?.elements.debtorId?.addEventListener('change', updateCreditorOptions);
@@ -1486,7 +1538,7 @@ async function renderShareQr() {
     image.hidden = false;
   } catch (error) {
     console.warn('Could not generate the share QR code.', error);
-    setNotice(t('qrFailed'));
+    setErrorNotice(t('qrFailed'));
   }
 }
 
@@ -1499,7 +1551,7 @@ async function copyShareUrl() {
     input?.focus();
     input?.select();
     if (!document.execCommand('copy')) {
-      setNotice(t('copyFailed'));
+      setErrorNotice(t('copyFailed'));
       return;
     }
   }
@@ -1544,7 +1596,7 @@ async function addAdminUser(event) {
     const form = event.currentTarget;
     const alias = cleanAlias(new FormData(form).get('alias'));
     if (!alias) {
-      setNotice(t('aliasRequired'));
+      setErrorNotice(t('aliasRequired'));
       return;
     }
     await setDoc(doc(collection(db, 'users')), {
@@ -1569,7 +1621,7 @@ async function saveAccount(event) {
     const form = new FormData(event.currentTarget);
     const alias = cleanAlias(form.get('alias'));
     if (!alias) {
-      setNotice(t('aliasRequired'));
+      setErrorNotice(t('aliasRequired'));
       return;
     }
     await updateDoc(doc(db, 'users', profile.uid), {
@@ -1588,7 +1640,7 @@ async function saveCurrencyConversion(event) {
     const form = new FormData(event.currentTarget);
     const resultCurrency = normalizeCurrency(form.get('resultCurrency'));
     if (!isAllowedCurrency(resultCurrency)) {
-      setNotice(t('currencyNotAllowed'));
+      setErrorNotice(t('currencyNotAllowed'));
       return;
     }
 
@@ -1600,7 +1652,7 @@ async function saveCurrencyConversion(event) {
 
       const rate = Number(rawRate);
       if (!isPositiveRate(rate)) {
-        setNotice(t('currencyRateInvalid', { currency }));
+        setErrorNotice(t('currencyRateInvalid', { currency }));
         return;
       }
       currencyRates[currency] = rate;
@@ -1631,15 +1683,15 @@ async function addLedgerEntry(event) {
     const note = String(form.get('note') || '').trim().slice(0, 160);
     const imageFile = form.get('entryImageCamera');
     if (!debtorId || !creditorId || debtorId === creditorId) {
-      setNotice(t('differentPeople'));
+      setErrorNotice(t('differentPeople'));
       return;
     }
     if (!Number.isFinite(amount) || amount <= 0) {
-      setNotice(t('amountPositive'));
+      setErrorNotice(t('amountPositive'));
       return;
     }
     if (!isAllowedCurrency(currency)) {
-      setNotice(t('currencyNotAllowed'));
+      setErrorNotice(t('currencyNotAllowed'));
       return;
     }
 
@@ -1682,15 +1734,15 @@ async function updateLedgerEntry(event) {
     const currency = normalizeCurrency(form.get('currency'));
     const note = String(form.get('note') || '').trim().slice(0, 160);
     if (!debtorId || !creditorId || debtorId === creditorId) {
-      setNotice(t('differentPeople'));
+      setErrorNotice(t('differentPeople'));
       return;
     }
     if (!Number.isFinite(amount) || amount <= 0) {
-      setNotice(t('amountPositive'));
+      setErrorNotice(t('amountPositive'));
       return;
     }
     if (!isAllowedCurrency(currency)) {
-      setNotice(t('currencyNotAllowed'));
+      setErrorNotice(t('currencyNotAllowed'));
       return;
     }
 
@@ -1711,7 +1763,7 @@ async function updateLedgerEntry(event) {
 async function addLedgerImage(entryId, file, entry = ledgerEntryById(entryId)) {
   if (!entry || !canManageEntry(entry)) return false;
   if (!file.type.startsWith('image/')) {
-    setNotice(t('imageUnsupported'));
+    setErrorNotice(t('imageUnsupported'));
     return false;
   }
 
@@ -1732,7 +1784,7 @@ async function addLedgerImage(entryId, file, entry = ledgerEntryById(entryId)) {
     return true;
   } catch (error) {
     console.warn('Could not add the ledger image.', error);
-    setNotice(error.message === 'The selected image is too large.'
+    setErrorNotice(error.message === 'The selected image is too large.'
       ? t('imageTooLarge')
       : t('operationFailed'));
     return false;
@@ -1775,13 +1827,13 @@ function addAllowedCurrency() {
   const currency = normalizeCurrency(input?.value);
   if (!currency) {
     input?.focus();
-    setNotice(t('currencyCodeInvalid'));
+    setErrorNotice(t('currencyCodeInvalid'));
     return;
   }
 
   const adminSettings = currentAdminCurrencySettings();
   if (adminSettings.allowedCurrencies.includes(currency)) {
-    setNotice(t('currencyAlreadyAllowed', { currency }));
+    setErrorNotice(t('currencyAlreadyAllowed', { currency }));
     return;
   }
 
@@ -1798,7 +1850,7 @@ function addAllowedCurrency() {
 function removeAllowedCurrency(currency) {
   const adminSettings = currentAdminCurrencySettings();
   if (currency === adminSettings.defaultCurrency) {
-    setNotice(t('cannotRemoveDefaultCurrency', { currency }));
+    setErrorNotice(t('cannotRemoveDefaultCurrency', { currency }));
     return;
   }
 
@@ -1818,7 +1870,7 @@ async function saveAppSettings(event) {
     const adminSettings = currentAdminCurrencySettings();
     const allowedCurrencies = normalizeAllowedCurrencies(adminSettings.allowedCurrencies);
     if (!allowedCurrencies.includes(defaultCurrency)) {
-      setNotice(t('currencyNotAllowed'));
+      setErrorNotice(t('currencyNotAllowed'));
       return;
     }
     await setDoc(settingsReference, {
@@ -2052,7 +2104,12 @@ async function fetchVersion() {
 
 void fetchVersion();
 
+function finishInitialLoading() {
+  loadingOverlay.hidden = true;
+}
+
 onAuthStateChanged(auth, (user) => {
+  finishInitialLoading();
   clearAllListeners();
   authUser = user;
   profile = null;

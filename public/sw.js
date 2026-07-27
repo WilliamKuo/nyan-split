@@ -1,4 +1,4 @@
-const CACHE_NAME = 'nyan-split-v1.2.1-rc';
+const CACHE_NAME = 'nyan-split-v1.2.2-rc';
 const APP_SHELL = [
   './',
   './index.html',
@@ -9,6 +9,7 @@ const APP_SHELL = [
   './manifest.json',
   './VERSION',
   './favicon.svg',
+  './assets/nyan-cat-loading.gif',
   './vendor/dijkstrajs.mjs',
   './vendor/qrcode.mjs',
 ];

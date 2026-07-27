@@ -36,6 +36,53 @@ body {
     var(--background);
 }
 
+.loading-overlay {
+  position: fixed;
+  z-index: 100;
+  inset: 0;
+  display: grid;
+  padding: 1.25rem;
+  place-items: center;
+  background: rgb(7 6 16 / 88%);
+  backdrop-filter: blur(8px);
+}
+
+.loading-overlay[hidden] {
+  display: none;
+}
+
+.loading-card {
+  display: grid;
+  width: min(100%, 17rem);
+  padding: 1rem;
+  gap: .7rem;
+  text-align: center;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 1.25rem;
+  box-shadow: 0 24px 65px rgb(0 0 0 / 32%);
+}
+
+.loading-card img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: contain;
+  image-rendering: pixelated;
+  border-radius: .8rem;
+}
+
+.loading-card p {
+  margin: 0;
+  color: var(--violet-light);
+  font-size: .86rem;
+  font-weight: 750;
+}
+
+.loading-card button {
+  width: 100%;
+}
+
 button,
 input,
 select {
@@ -260,11 +307,20 @@ input[readonly] {
 .notice {
   margin: 0 0 1rem;
   padding: .8rem .9rem;
+  border-radius: .75rem;
+  line-height: 1.4;
+}
+
+.notice-info {
+  color: #c7f9db;
+  background: rgb(48 153 94 / 19%);
+  border: 1px solid rgb(105 223 151 / 36%);
+}
+
+.notice-error {
   color: #ffd3df;
   background: rgb(177 48 94 / 19%);
   border: 1px solid rgb(255 143 173 / 36%);
-  border-radius: .75rem;
-  line-height: 1.4;
 }
 
 .app-shell {
@@ -490,28 +546,42 @@ input[readonly] {
   line-height: 1.45;
 }
 
-.ledger-form {
-  display: grid;
-  grid-template-columns: minmax(8rem, 1fr) auto minmax(8rem, 1fr) minmax(8rem, 1fr);
-  gap: .75rem;
-  align-items: end;
+.ledger-filter {
+  margin-bottom: 1rem;
 }
 
-.ledger-form > * {
+.ledger-edit-form {
+  display: grid;
+  width: min(100%, 34rem);
+  gap: .9rem;
+  margin: 0;
+}
+
+.ledger-edit-form > * {
   min-width: 0;
 }
 
-.ledger-form button {
-  min-height: 44px;
+.ledger-edit-person-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: end;
+  gap: .75rem;
 }
 
-.ledger-amount-field input[type="number"] {
+.ledger-edit-amount-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(6rem, 7rem);
+  align-items: end;
+  gap: .75rem;
+}
+
+.ledger-edit-amount-field input[type="number"] {
   appearance: textfield;
   -moz-appearance: textfield;
 }
 
-.ledger-amount-field input[type="number"]::-webkit-inner-spin-button,
-.ledger-amount-field input[type="number"]::-webkit-outer-spin-button {
+.ledger-edit-amount-field input[type="number"]::-webkit-inner-spin-button,
+.ledger-edit-amount-field input[type="number"]::-webkit-outer-spin-button {
   margin: 0;
   -webkit-appearance: none;
 }
@@ -582,7 +652,7 @@ input[readonly] {
 }
 
 .conversion-currency-field {
-  width: min(100%, 16rem);
+  width: 100%;
 }
 
 .currency-rate-table {
@@ -639,10 +709,8 @@ input[readonly] {
 }
 
 .settlement-transfer {
-  display: inline-grid;
-  grid-template-columns: 10ch auto 10ch;
+  display: inline-flex;
   align-items: center;
-  column-gap: 0;
   min-width: 0;
 }
 
@@ -885,7 +953,7 @@ table {
 }
 
 .ledger-user-column {
-  width: 10ch;
+  width: 5ch;
 }
 
 .ledger-debt-column {
@@ -954,15 +1022,14 @@ tbody tr:last-child td {
   background: var(--surface-raised);
 }
 
-.ledger-edit-form {
-  margin: 0;
+.ledger-edit-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: .5rem;
 }
 
-.ledger-edit-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: .5rem;
-  grid-column: 1 / -1;
+.ledger-edit-actions button {
+  min-height: 44px;
 }
 
 .ledger-row-cleared {
@@ -1138,36 +1205,6 @@ html[data-theme="light"] .app-nav {
   box-shadow: 0 15px 45px rgb(40 31 66 / 18%);
 }
 
-@media (max-width: 900px) {
-  .ledger-form {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .field-wide {
-    grid-column: span 2;
-  }
-}
-
-@media (min-width: 901px) {
-  .ledger-form {
-    grid-template-columns:
-      minmax(5ch, 7ch)
-      auto
-      minmax(5ch, 7ch)
-      minmax(7ch, 9ch)
-      minmax(3ch, 5ch);
-  }
-
-  .ledger-note-field,
-  .ledger-form button {
-    grid-column: 1 / -1;
-  }
-
-  .ledger-form button {
-    justify-self: start;
-  }
-}
-
 @media (max-width: 700px) {
   .app-shell {
     grid-template-columns: 1fr;
@@ -1278,7 +1315,7 @@ html[data-theme="light"] .app-nav {
   }
 
   .new-entry-person-row {
-    gap: .35rem;
+    gap: .75rem;
   }
 
   .new-entry-amount-row {
@@ -1291,6 +1328,9 @@ html[data-theme="light"] .app-nav {
   }
 
   .new-entry-person-row select,
+  .ledger-edit-person-row select,
+  .ledger-edit-amount-row input,
+  .ledger-edit-amount-row select,
   .new-entry-amount-row input,
   .new-entry-amount-row select {
     padding-inline: .5rem;
@@ -1334,10 +1374,6 @@ html[data-theme="light"] .app-nav {
     max-width: 8ch;
   }
 
-  .settlement-transfer {
-    grid-template-columns: 8ch auto 8ch;
-  }
-
   .page-heading {
     align-items: stretch;
   }
@@ -1347,29 +1383,6 @@ html[data-theme="light"] .app-nav {
   }
 
   .result-card {
-    width: 100%;
-  }
-
-  .ledger-form {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .ledger-amount-field,
-  .ledger-currency-field,
-  .field-wide.ledger-note-field,
-  .ledger-form button {
-    grid-column: auto;
-  }
-
-  .field-wide {
-    grid-column: auto;
-  }
-
-  .debt-connector {
-    justify-self: center;
-  }
-
-  .ledger-form button {
     width: 100%;
   }
 
@@ -1424,7 +1437,7 @@ html[data-theme="light"] .app-nav {
   }
 
   .ledger-edit-actions button {
-    flex: 1 1 auto;
+    width: 100%;
   }
 
   .ledger-table tbody tr td {

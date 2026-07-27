@@ -27,8 +27,25 @@
     </script>
   </head>
   <body>
+    <div id="loading-overlay" class="loading-overlay" role="status" aria-live="polite" aria-label="Loading">
+      <div class="loading-card">
+        <img src="./assets/nyan-cat-loading.gif" alt="Nyan Cat flying through a rainbow" />
+        <p id="loading-message">Loading NyanSplit…</p>
+        <button id="loading-retry" type="button" hidden>Reload</button>
+      </div>
+    </div>
     <div id="root"></div>
     <script type="module" src="./app.js"></script>
+    <script>
+      window.setTimeout(() => {
+        const overlay = document.querySelector('#loading-overlay');
+        if (overlay?.hidden) return;
+
+        document.querySelector('#loading-message').textContent = 'NyanSplit is taking too long to start.';
+        document.querySelector('#loading-retry').hidden = false;
+      }, 12000);
+      document.querySelector('#loading-retry').onclick = () => window.location.reload();
+    </script>
     <script>
       if ('serviceWorker' in navigator) {
         window.addEventListener('load', () => {
