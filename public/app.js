@@ -49,6 +49,10 @@ const JPEG_QUALITIES = [
 const DEFAULT_ALLOWED_CURRENCIES = [
   'TWD',
 ];
+const LEDGER_USER_STATUSES = [
+  'active',
+  'removed',
+];
 const CURRENCY_SUGGESTIONS = [
   ['AUD', 'Australian dollar'],
   ['CAD', 'Canadian dollar'],
@@ -79,6 +83,8 @@ let ledgerEntries = [];
 let ledgerFilter = '';
 let ledgerImages = new Map();
 let activeUsers = [];
+let knownUsers = [];
+let managedUsers = [];
 let calculatedSettlements = null;
 let notice = '';
 let noticeType = 'info';
@@ -195,6 +201,10 @@ function defaultAlias() {
 
 function userAlias(user) {
   return user?.alias || user?.name || user?.email?.split('@')[0] || t('unknownUser');
+}
+
+function knownUserById(userId) {
+  return knownUsers.find((user) => user.id === userId) || null;
 }
 
 function userPhotoUrl(user) {
@@ -457,11 +467,23 @@ function renderRegistration() {
 }
 
 function renderPending() {
-  const rejected = profile.status === 'rejected';
+  const statusContent = {
+    rejected: {
+      heading: t('rejected'),
+      text: t('rejectedText'),
+    },
+    removed: {
+      heading: t('removed'),
+      text: t('removedText'),
+    },
+  }[profile.status] || {
+    heading: t('pending'),
+    text: t('pendingText'),
+  };
   root.innerHTML = authFrame(`
     <p class="eyebrow">${escapeHtml(userAlias(profile))}</p>
-    <h2>${escapeHtml(rejected ? t('rejected') : t('pending'))}</h2>
-    <p class="muted">${escapeHtml(rejected ? t('rejectedText') : t('pendingText'))}</p>
+    <h2>${escapeHtml(statusContent.heading)}</h2>
+    <p class="muted">${escapeHtml(statusContent.text)}</p>
     <button class="text-button" type="button" data-action="signout">${escapeHtml(t('signOut'))}</button>
   `);
   bind();
@@ -698,7 +720,13 @@ function resultCopy(amount, currency = profileCurrency()) {
 }
 
 function accountOptions(selectedUserId, excludedUserId = '') {
-  return activeUsers
+  const users = [...activeUsers];
+  const selectedUser = knownUserById(selectedUserId);
+  if (selectedUser && !users.some((user) => user.id === selectedUserId)) {
+    users.push(selectedUser);
+  }
+
+  return users
     .filter((user) => user.id !== excludedUserId)
     .map((user) => (
       `<option value="${escapeHtml(user.id)}"${user.id === selectedUserId ? ' selected' : ''}>${escapeHtml(userAlias(user))}</option>`
@@ -816,6 +844,13 @@ async function compressLedgerImage(file) {
   throw new Error('The selected image is too large.');
 }
 
+function reportLedgerImageError(error) {
+  console.warn('Could not add the ledger image.', error);
+  setErrorNotice(error.message === 'The selected image is too large.'
+    ? t('imageTooLarge')
+    : t('operationFailed'));
+}
+
 function renderLedgerImageButton(entry) {
   const images = ledgerImagesForEntry(entry.id);
   const canManage = canManageEntry(entry);
@@ -844,8 +879,8 @@ function renderLedgerImageViewer() {
     : 0;
   selectedLedgerImageIndex = currentIndex;
   const currentImage = images[currentIndex] || null;
-  const debtor = userAlias(activeUsers.find((user) => user.id === (entry.debtorId || entry.owedBy)));
-  const creditor = userAlias(activeUsers.find((user) => user.id === (entry.creditorId || entry.paidBy)));
+  const debtor = userAlias(knownUserById(entry.debtorId || entry.owedBy));
+  const creditor = userAlias(knownUserById(entry.creditorId || entry.paidBy));
 
   return `<section class="page-content narrow-content">
     <div class="page-heading ledger-image-heading">
@@ -951,7 +986,10 @@ function renderSettlementSummary(myBalance) {
       currencies: unavailableCurrencies.join(', '),
     })
     : '';
-  const balanceRows = activeUsers.map((user) => {
+  const balanceUsers = knownUsers.filter((user) => (
+    user.status === 'active' || balances.has(user.id)
+  ));
+  const balanceRows = balanceUsers.map((user) => {
     const amount = balances.get(user.id) || 0;
     const balanceClass = amount > SETTLEMENT_EPSILON
       ? 'credit'
@@ -964,8 +1002,8 @@ function renderSettlementSummary(myBalance) {
     </div>`;
   }).join('');
   const settlementRows = (settlements || []).map((settlement) => {
-    const debtor = userAlias(activeUsers.find((user) => user.id === settlement.debtorId));
-    const creditor = userAlias(activeUsers.find((user) => user.id === settlement.creditorId));
+    const debtor = userAlias(knownUserById(settlement.debtorId));
+    const creditor = userAlias(knownUserById(settlement.creditorId));
     return `<div class="settlement-row">
       <span class="settlement-transfer" aria-label="${escapeHtml(t('settlementTransfer', { debtor, creditor }))}">
         <span class="settlement-name" title="${escapeHtml(debtor)}">${escapeHtml(debtor)}</span>
@@ -1040,10 +1078,10 @@ function filteredLedgerEntries() {
   return ledgerEntries.filter((entry) => {
     const debtorId = entry.debtorId || entry.owedBy;
     const creditorId = entry.creditorId || entry.paidBy;
-    const debtor = userAlias(activeUsers.find((user) => user.id === debtorId));
-    const creditor = userAlias(activeUsers.find((user) => user.id === creditorId));
+    const debtor = userAlias(knownUserById(debtorId));
+    const creditor = userAlias(knownUserById(creditorId));
     const creator = entry.createdBy
-      ? userAlias(activeUsers.find((user) => user.id === entry.createdBy))
+      ? userAlias(knownUserById(entry.createdBy))
       : '';
     const amount = Number(entry.amount);
     const searchText = [
@@ -1073,10 +1111,10 @@ function renderLedgerRows(entries = ledgerEntries) {
 
     const debtorId = entry.debtorId || entry.owedBy;
     const creditorId = entry.creditorId || entry.paidBy;
-    const debtor = userAlias(activeUsers.find((user) => user.id === debtorId));
-    const creditor = userAlias(activeUsers.find((user) => user.id === creditorId));
+    const debtor = userAlias(knownUserById(debtorId));
+    const creditor = userAlias(knownUserById(creditorId));
     const creator = entry.createdBy 
-      ? userAlias(activeUsers.find((user) => user.id === entry.createdBy)) || t('unknownUser')
+      ? userAlias(knownUserById(entry.createdBy)) || t('unknownUser')
       : '—';
     const cleared = Boolean(entry.cleared);
     const actions = canManageEntry(entry)
@@ -1260,12 +1298,40 @@ function statusBadge(status) {
     active: 'statusActive',
     pending: 'statusPending',
     rejected: 'statusRejected',
+    removed: 'statusRemoved',
   }[status] || 'statusPending';
   return `<span class="status-badge status-${escapeHtml(status)}">${escapeHtml(t(statusKey))}</span>`;
 }
 
+function renderUserActions(user) {
+  const actions = [];
+
+  if (user.status === 'pending') {
+    actions.push(
+      `<button type="button" data-user-status="active" data-user-id="${escapeHtml(user.id)}">${escapeHtml(t('approve'))}</button>`,
+      `<button class="secondary-button danger-text" type="button" data-user-status="rejected" data-user-id="${escapeHtml(user.id)}">${escapeHtml(t('reject'))}</button>`,
+    );
+  } else if (user.status === 'rejected') {
+    actions.push(
+      `<button type="button" data-user-status="active" data-user-id="${escapeHtml(user.id)}">${escapeHtml(t('approve'))}</button>`,
+    );
+  } else if (user.status === 'removed') {
+    actions.push(
+      `<button type="button" data-user-status="active" data-user-id="${escapeHtml(user.id)}">${escapeHtml(t('restoreUser'))}</button>`,
+    );
+  }
+
+  if (user.id !== profile.uid && user.status !== 'removed') {
+    actions.push(
+      `<button class="secondary-button danger-text" type="button" data-remove-user="${escapeHtml(user.id)}">${escapeHtml(t('removeUser'))}</button>`,
+    );
+  }
+
+  return actions.join('') || '<span class="muted">—</span>';
+}
+
 function renderUserRows() {
-  return activeUsers.map((user) => `<tr>
+  return managedUsers.map((user) => `<tr>
     <td>
       <div style="display: flex; align-items: center; gap: .75rem;">
         ${renderUserAvatar(user)}
@@ -1276,7 +1342,7 @@ function renderUserRows() {
       </div>
     </td>
     <td>${statusBadge(user.status || 'pending')}</td>
-    <td class="user-actions">${user.status === 'pending' ? `<button type="button" data-user-status="active" data-user-id="${escapeHtml(user.id)}">${escapeHtml(t('approve'))}</button><button class="secondary-button danger-text" type="button" data-user-status="rejected" data-user-id="${escapeHtml(user.id)}">${escapeHtml(t('reject'))}</button>` : user.status === 'rejected' ? `<button type="button" data-user-status="active" data-user-id="${escapeHtml(user.id)}">${escapeHtml(t('approve'))}</button>` : ''}${user.id !== profile.uid ? `<button class="secondary-button danger-text" type="button" data-remove-user="${escapeHtml(user.id)}">${escapeHtml(t('removeUser'))}</button>` : user.status === 'active' ? '<span class="muted">—</span>' : ''}</td>
+    <td class="user-actions">${renderUserActions(user)}</td>
   </tr>`).join('');
 }
 
@@ -1765,8 +1831,25 @@ async function addLedgerEntry(event) {
       return;
     }
 
+    const hasImage = imageFile instanceof File && imageFile.size > 0;
+    if (hasImage && !imageFile.type.startsWith('image/')) {
+      setErrorNotice(t('imageUnsupported'));
+      return;
+    }
+
+    let imageDataUrl = '';
+    if (hasImage) {
+      try {
+        imageDataUrl = await compressLedgerImage(imageFile);
+      } catch (error) {
+        reportLedgerImageError(error);
+        return;
+      }
+    }
+
     const ledgerReference = doc(collection(db, 'ledger'));
-    await setDoc(ledgerReference, {
+    const batch = writeBatch(db);
+    batch.set(ledgerReference, {
       amount,
       cleared: false,
       creditorId,
@@ -1776,15 +1859,19 @@ async function addLedgerEntry(event) {
       debtorId,
       note,
     });
-    formElement.reset();
-    if (imageFile instanceof File && imageFile.size > 0) {
-      const imageAdded = await addLedgerImage(
-        ledgerReference.id,
-        imageFile,
-        { createdBy: profile.uid },
-      );
-      if (!imageAdded) return;
+
+    if (imageDataUrl) {
+      const imageReference = doc(collection(db, 'ledgerImages'));
+      batch.set(imageReference, {
+        createdAt: serverTimestamp(),
+        createdBy: profile.uid,
+        dataUrl: imageDataUrl,
+        ledgerId: ledgerReference.id,
+      });
     }
+
+    await batch.commit();
+    formElement.reset();
     setNotice(t('entryAdded'));
   } catch (error) {
     reportError(error);
@@ -1853,10 +1940,7 @@ async function addLedgerImage(entryId, file, entry = ledgerEntryById(entryId)) {
     setNotice(t('imageAdded'));
     return true;
   } catch (error) {
-    console.warn('Could not add the ledger image.', error);
-    setErrorNotice(error.message === 'The selected image is too large.'
-      ? t('imageTooLarge')
-      : t('operationFailed'));
+    reportLedgerImageError(error);
     return false;
   }
 }
@@ -1958,23 +2042,37 @@ async function saveAppSettings(event) {
 
 async function updateUserStatus(userId, status) {
   try {
+    const user = managedUsers.find((item) => item.id === userId);
     await updateDoc(doc(db, 'users', userId), {
       status,
       updatedAt: serverTimestamp(),
     });
-    setNotice(status === 'active' ? t('userApproved') : t('rejectedUser'));
+    setNotice(user?.status === 'removed'
+      ? t('userRestored')
+      : status === 'active' ? t('userApproved') : t('rejectedUser'));
   } catch (error) {
     reportError(error);
   }
 }
 
 async function removeUser(userId) {
-  const user = activeUsers.find((item) => item.id === userId);
+  const user = managedUsers.find((item) => item.id === userId);
   if (!user || userId === profile.uid) return;
   if (!window.confirm(t('removeUserConfirm', { name: userAlias(user) }))) return;
 
   try {
-    await deleteDoc(doc(db, 'users', userId));
+    if (user.status === 'active') {
+      await updateDoc(doc(db, 'users', userId), {
+        currencyRates: {},
+        email: '',
+        photoURL: '',
+        role: 'user',
+        status: 'removed',
+        updatedAt: serverTimestamp(),
+      });
+    } else {
+      await deleteDoc(doc(db, 'users', userId));
+    }
     setNotice(t('userRemoved'));
   } catch (error) {
     reportError(error);
@@ -2065,6 +2163,8 @@ function stopActiveListeners() {
   ledgerEntries = [];
   ledgerImages = new Map();
   activeUsers = [];
+  knownUsers = [];
+  managedUsers = [];
   clearCalculatedSettlements();
 }
 
@@ -2072,16 +2172,22 @@ function watchActiveData() {
   stopActiveListeners();
   const usersSource = profile.role === 'admin'
     ? collection(db, 'users')
-    : query(collection(db, 'users'), where('status', '==', 'active'));
+    : query(
+      collection(db, 'users'),
+      where('status', 'in', LEDGER_USER_STATUSES),
+    );
 
   stopUsers = onSnapshot(usersSource, (snapshot) => {
     clearCalculatedSettlements();
-    activeUsers = snapshot.docs
+    const users = snapshot.docs
       .map((item) => ({
         id: item.id,
         ...item.data(),
       }))
       .sort((left, right) => userAlias(left).localeCompare(userAlias(right)));
+    knownUsers = users.filter((user) => LEDGER_USER_STATUSES.includes(user.status));
+    activeUsers = knownUsers.filter((user) => user.status === 'active');
+    managedUsers = profile.role === 'admin' ? users : [];
     render();
   }, listenerError('Users'));
 

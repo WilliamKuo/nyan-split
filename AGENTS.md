@@ -47,7 +47,7 @@ NyanSplit is a Firebase-based shared accounting ledger with administrator approv
 ### `firestore.rules` (Security)
 **CRITICAL**: All data security is enforced here. Firebase API keys are public; security comes from these rules.
 
-- User roles: `pending`, `active`, `admin`
+- User statuses: `pending`, `active`, `rejected`, `removed`; roles: `user`, `admin`
 - Collections: `users`, `ledger`, `ledgerImages`, `settings`
 - Key functions: `signedIn()`, `active()`, `admin()`
 
@@ -92,7 +92,7 @@ firebase deploy
 1. Read existing rule patterns (lines 1-141 in `firestore.rules`)
 2. Understand helper functions: `signedIn()`, `active()`, `admin()`, `allowedCurrency()`
 3. Add new rules following the same pattern
-4. Test with different user roles: unauthenticated, pending, active, admin
+4. Test with different user states: unauthenticated, pending, active, removed, admin
 5. Verify rejection cases work correctly
 
 ### 3. Local Development
@@ -201,7 +201,7 @@ const helpText = t('newFeatureHelp');
   email: string,           // From Firebase Auth
   photoURL: string,        // From Firebase Auth
   role: 'user' | 'admin',
-  status: 'pending' | 'active',
+  status: 'pending' | 'active' | 'rejected' | 'removed',
   resultCurrency: string,  // User's preferred display currency
   currencyRates: {         // Optional custom rates
     [currency]: number
@@ -250,11 +250,13 @@ const helpText = t('newFeatureHelp');
 2. Account created with `status: 'pending'`
 3. Admin manually approves → `status: 'active'`
 4. Only active users can access ledger data
+5. Removing an active user sets `status: 'removed'`, clears email, photo, and custom rates, and retains the alias for ledger history
 
 **Authorization Levels**:
 - **Unauthenticated**: Can only sign in
 - **Pending**: Can view own profile, waiting for approval
 - **Active**: Can read/write ledger, manage own entries
+- **Removed**: Can view their own disabled profile but cannot access ledger data
 - **Admin**: Can approve users, manage currencies, delete any entry
 
 **Critical Rules**:

@@ -701,7 +701,7 @@ input[readonly] {
 
 .settlement-name {
   display: inline-block;
-  max-width: 10ch;
+  max-width: 20ch;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -944,7 +944,7 @@ table {
 
 .ledger-table {
   min-width: 42rem;
-  table-layout: fixed;
+  table-layout: auto;
 }
 
 .ledger-mobile-summary-column,
@@ -953,7 +953,7 @@ table {
 }
 
 .ledger-user-column {
-  width: 5ch;
+  width: 10ch;
 }
 
 .ledger-debt-column {
@@ -970,8 +970,6 @@ table {
 }
 
 .ledger-user-cell {
-  overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
@@ -1169,6 +1167,11 @@ tbody tr:last-child td {
 .status-rejected {
   color: var(--rose);
   background: rgb(255 143 171 / 12%);
+}
+
+.status-removed {
+  color: var(--muted);
+  background: rgb(170 163 191 / 12%);
 }
 
 html[data-theme="light"] {
@@ -1412,8 +1415,9 @@ html[data-theme="light"] .app-nav {
     grid-template-columns: 1fr auto;
     grid-template-areas:
       "people  image"
-      "amount  amount"
+      "amount  currency"
       "note    note"
+      "creator creator"
       "actions actions";
     gap: .35rem .6rem;
     padding: .75rem .85rem;
@@ -1477,8 +1481,18 @@ html[data-theme="light"] .app-nav {
     color: var(--cyan);
   }
 
-  /* Note cell */
+  /* Currency cell */
   .ledger-table tbody tr td:nth-child(6) {
+    grid-area: currency;
+    align-self: center;
+    justify-self: end;
+    color: var(--violet-light);
+    font-size: .82rem;
+    font-weight: 700;
+  }
+
+  /* Note cell */
+  .ledger-table tbody tr td:nth-child(7) {
     grid-area: note;
     color: var(--muted);
     font-size: .82rem;
@@ -1489,6 +1503,15 @@ html[data-theme="light"] .app-nav {
     grid-area: image;
     width: auto;
     justify-self: end;
+  }
+
+  /* Creator cell */
+  .ledger-table tbody tr td.ledger-user-cell:nth-child(9) {
+    grid-area: creator;
+    overflow: visible;
+    color: var(--muted);
+    font-size: .75rem;
+    white-space: normal;
   }
 
   /* Actions cell */

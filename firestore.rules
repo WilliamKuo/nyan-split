@@ -40,20 +40,40 @@ service cloud.firestore {
         && (!data.keys().hasAll(['currencyRates'])
           || data.currencyRates is map);
     }
-    function validLedgerEntryFields(data) {
+    function activeUser(userId) {
+      return exists(/databases/$(database)/documents/users/$(userId))
+        && get(/databases/$(database)/documents/users/$(userId)).data.status == 'active';
+    }
+    function visibleLedgerUser(data) {
+      return data.status == 'active' || data.status == 'removed';
+    }
+    function retainedLedgerUser(userId, existingUserId) {
+      return userId == existingUserId
+        && exists(/databases/$(database)/documents/users/$(userId))
+        && get(/databases/$(database)/documents/users/$(userId)).data.status == 'removed';
+    }
+    function validLedgerEntryFields(data, existingData) {
       return data.creditorId is string
         && data.debtorId is string
         && data.creditorId != data.debtorId
-        && activeUser(data.creditorId)
-        && activeUser(data.debtorId)
+        && (
+          activeUser(data.creditorId)
+          || retainedLedgerUser(data.creditorId, existingData.creditorId)
+        )
+        && (
+          activeUser(data.debtorId)
+          || retainedLedgerUser(data.debtorId, existingData.debtorId)
+        )
         && data.amount is number
         && data.amount > 0
         && allowedCurrency(data.currency)
         && data.note is string;
     }
-    function activeUser(userId) {
-      return exists(/databases/$(database)/documents/users/$(userId))
-        && get(/databases/$(database)/documents/users/$(userId)).data.status == 'active';
+    function ledgerOwnedByCaller(ledgerId) {
+      return ledgerId is string
+        && exists(/databases/$(database)/documents/ledger/$(ledgerId))
+        && get(/databases/$(database)/documents/ledger/$(ledgerId)).data.createdBy
+          == request.auth.uid;
     }
 
     match /users/{userId} {
@@ -69,11 +89,12 @@ service cloud.firestore {
         && allowedCurrency(request.resource.data.resultCurrency));
       allow get: if (signedIn() && request.auth.uid == userId)
         || admin()
-        || (active() && resource.data.status == 'active');
+        || (active() && visibleLedgerUser(resource.data));
       allow list: if admin()
-        || (active() && resource.data.status == 'active');
+        || (active() && visibleLedgerUser(resource.data));
       allow update: if admin()
         || (signedIn() && request.auth.uid == userId
+          && resource.data.status != 'removed'
           && request.resource.data.diff(resource.data).affectedKeys()
             .hasOnly(['alias', 'resultCurrency', 'currencyRates', 'updatedAt'])
           && validAlias(request.resource.data.alias)
@@ -109,7 +130,7 @@ service cloud.firestore {
         && allowedCurrency(request.resource.data.currency);
       allow update: if active()
         && request.resource.data.createdBy == resource.data.createdBy
-        && validLedgerEntryFields(request.resource.data)
+        && validLedgerEntryFields(request.resource.data, resource.data)
         && request.resource.data.diff(resource.data).affectedKeys()
           .hasOnly(['amount', 'creditorId', 'debtorId', 'currency', 'note', 'cleared'])
         && (admin() || resource.data.createdBy == request.auth.uid)
@@ -131,13 +152,21 @@ service cloud.firestore {
         && request.resource.data.createdBy == request.auth.uid
         && request.resource.data.dataUrl is string
         && request.resource.data.dataUrl.size() <= 700000
-        && exists(/databases/$(database)/documents/ledger/$(request.resource.data.ledgerId))
+        && existsAfter(
+          /databases/$(database)/documents/ledger/$(request.resource.data.ledgerId)
+        )
         && (
-          get(/databases/$(database)/documents/ledger/$(request.resource.data.ledgerId)).data.createdBy == request.auth.uid
+          getAfter(
+            /databases/$(database)/documents/ledger/$(request.resource.data.ledgerId)
+          ).data.createdBy == request.auth.uid
           || admin()
         );
       allow delete: if active()
-        && (resource.data.createdBy == request.auth.uid || admin());
+        && (
+          resource.data.createdBy == request.auth.uid
+          || admin()
+          || ledgerOwnedByCaller(resource.data.get('ledgerId', ''))
+        );
     }
   }
 }

@@ -27,7 +27,7 @@ On first sign-in, a user can keep or change their Google display name as an alia
 
 Only active accounts can access the shared ledger. Each ledger entry records a direct debt: one user owes another user an amount. The result card shows only the signed-in user's net balance. User approval, rejection, profile removal, and currency-allowlist changes are restricted to administrators by `firestore.rules`. Deploy those rules before treating the app as usable.
 
-Anonymous sign-ins follow the same registration and approval flow as Google sign-ins. Removing a user deletes their Firestore profile and revokes their app access, but retains ledger history and does not delete their Firebase Authentication account. Deleting Firebase Authentication accounts requires a trusted backend using the Firebase Admin SDK.
+Anonymous sign-ins follow the same registration and approval flow as Google sign-ins. Removing an active user marks their Firestore profile as `removed`, clears their email, photo, and custom rates, revokes app access, and retains their alias for ledger history. Removing a pending or rejected registration deletes its Firestore profile. Neither operation deletes the Firebase Authentication account; that requires a trusted backend using the Firebase Admin SDK.
 
 ## Languages
 
