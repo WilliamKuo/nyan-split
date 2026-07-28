@@ -40,6 +40,7 @@ const IMAGE_MAX_DIMENSION = 1600;
 const IMAGE_MIN_DIMENSION = 480;
 const IMAGE_MAX_BYTES = 500 * 1024;
 const BATCH_DELETE_LIMIT = 400;
+const NEW_LEDGER_ENTRY_IMAGE_KEY = 'new-entry';
 const JPEG_QUALITIES = [
   .78,
   .68,
@@ -112,6 +113,7 @@ let appInstalled = window.matchMedia('(display-mode: standalone)').matches
 const usdRates = new Map([['USD', 1]]);
 const rateRequests = new Map();
 const unavailablePublicRates = new Set();
+const pendingLedgerEntryImages = new Map();
 
 window.addEventListener('beforeinstallprompt', (event) => {
   event.preventDefault();
@@ -844,11 +846,82 @@ async function compressLedgerImage(file) {
   throw new Error('The selected image is too large.');
 }
 
+async function compressLedgerImageFiles(files) {
+  const dataUrls = [];
+  for (const file of files) {
+    dataUrls.push(await compressLedgerImage(file));
+  }
+  return dataUrls;
+}
+
 function reportLedgerImageError(error) {
   console.warn('Could not add the ledger image.', error);
   setErrorNotice(error.message === 'The selected image is too large.'
     ? t('imageTooLarge')
     : t('operationFailed'));
+}
+
+function ledgerEntryImageKey(entryId = '') {
+  return entryId
+    ? `edit:${entryId}`
+    : NEW_LEDGER_ENTRY_IMAGE_KEY;
+}
+
+function pendingLedgerEntryImageFiles(imageKey) {
+  return pendingLedgerEntryImages.get(imageKey) || [];
+}
+
+function ledgerEntryImagePickerLabel(imageCount) {
+  return imageCount
+    ? `${t('takePhoto')}. ${t('imagesSelected', { count: imageCount })}`
+    : t('takePhoto');
+}
+
+function renderLedgerEntryImagePicker(entryId = '') {
+  const imageKey = ledgerEntryImageKey(entryId);
+  const imageCount = pendingLedgerEntryImageFiles(imageKey).length;
+  const pickerLabel = ledgerEntryImagePickerLabel(imageCount);
+
+  return `<label class="file-picker entry-camera-button" title="${escapeHtml(pickerLabel)}">
+    <input class="sr-only" name="entryImageCamera" type="file" accept="image/*" capture="environment" multiple />
+    <span aria-hidden="true">📷</span>
+    <span class="entry-image-count"${imageCount ? '' : ' hidden'} aria-hidden="true">${escapeHtml(imageCount)}</span>
+    <span class="sr-only entry-image-label">${escapeHtml(pickerLabel)}</span>
+  </label>`;
+}
+
+function bindLedgerEntryImagePicker(form, entryId = '') {
+  const imageInput = form?.elements.entryImageCamera;
+  if (!imageInput) return;
+
+  const imageKey = ledgerEntryImageKey(entryId);
+  imageInput.addEventListener('change', (event) => {
+    const input = event.currentTarget;
+    const files = Array.from(input.files || []).filter((file) => file.size > 0);
+    input.value = '';
+    if (!files.length) return;
+    if (files.some((file) => !file.type.startsWith('image/'))) {
+      setErrorNotice(t('imageUnsupported'));
+      return;
+    }
+
+    const queuedFiles = [
+      ...pendingLedgerEntryImageFiles(imageKey),
+      ...files,
+    ];
+    pendingLedgerEntryImages.set(imageKey, queuedFiles);
+
+    const picker = input.closest('.entry-camera-button');
+    const pickerLabel = ledgerEntryImagePickerLabel(queuedFiles.length);
+    const count = picker?.querySelector('.entry-image-count');
+    const label = picker?.querySelector('.entry-image-label');
+    if (picker) picker.title = pickerLabel;
+    if (count) {
+      count.hidden = false;
+      count.textContent = String(queuedFiles.length);
+    }
+    if (label) label.textContent = pickerLabel;
+  });
 }
 
 function renderLedgerImageButton(entry) {
@@ -1051,17 +1124,18 @@ function renderLedgerEntryEdit(entry) {
 
   return `<tr class="ledger-row-editing">
     <td colspan="10">
-      <form id="ledger-edit-form" class="ledger-edit-form">
-        <div class="ledger-edit-person-row">
+      <form id="ledger-edit-form" class="entry-form ledger-edit-form">
+        <div class="entry-note-row">
+          <label class="field"><span>${escapeHtml(t('note'))}</span><input name="note" maxlength="160" value="${escapeHtml(entry.note || '')}" placeholder="${escapeHtml(t('notePlaceholder'))}" /></label>
+          ${renderLedgerEntryImagePicker(entry.id)}
+        </div>
+        <div class="entry-details-row">
           <label class="field"><span>${escapeHtml(t('debtor'))}</span><select name="debtorId" aria-label="${escapeHtml(t('debtor'))}">${accountOptions(debtorId)}</select></label>
           <span class="debt-connector-inline" aria-hidden="true">${escapeHtml(t('debtConnector'))}</span>
           <label class="field"><span>${escapeHtml(t('creditor'))}</span><select name="creditorId" aria-label="${escapeHtml(t('creditor'))}">${accountOptions(creditorId, debtorId)}</select></label>
-        </div>
-        <div class="ledger-edit-amount-row">
-          <label class="field ledger-edit-amount-field"><span>${escapeHtml(t('amount'))}</span><input name="amount" type="number" min="0.01" step="0.01" inputmode="decimal" value="${escapeHtml(String(entry.amount ?? ''))}" required /></label>
+          <label class="field entry-amount-field"><span>${escapeHtml(t('amount'))}</span><input name="amount" type="number" min="0.01" step="0.01" inputmode="decimal" value="${escapeHtml(String(entry.amount ?? ''))}" required /></label>
           <label class="field"><span>${escapeHtml(t('currency'))}</span><select name="currency">${renderCurrencyOptions(currency)}</select></label>
         </div>
-        <label class="field ledger-edit-note-field"><span>${escapeHtml(t('note'))}</span><input name="note" maxlength="160" value="${escapeHtml(entry.note || '')}" placeholder="${escapeHtml(t('notePlaceholder'))}" /></label>
         <div class="ledger-edit-actions">
           <button type="submit">${escapeHtml(t('saveChanges'))}</button>
           <button class="secondary-button" type="button" data-cancel-edit-entry="${escapeHtml(entry.id)}">${escapeHtml(t('cancel'))}</button>
@@ -1080,18 +1154,13 @@ function filteredLedgerEntries() {
     const creditorId = entry.creditorId || entry.paidBy;
     const debtor = userAlias(knownUserById(debtorId));
     const creditor = userAlias(knownUserById(creditorId));
-    const creator = entry.createdBy
-      ? userAlias(knownUserById(entry.createdBy))
-      : '';
     const amount = Number(entry.amount);
     const searchText = [
       debtor,
       creditor,
       Number.isFinite(amount) ? String(amount) : '',
       Number.isFinite(amount) ? amount.toFixed(2) : '',
-      entry.currency || DEFAULT_CURRENCY,
       entry.note || '',
-      creator,
     ].join(' ').toLocaleLowerCase();
 
     return searchText.includes(filter);
@@ -1133,7 +1202,10 @@ function renderLedgerRows(entries = ledgerEntries) {
     <td>${escapeHtml(entry.currency || DEFAULT_CURRENCY)}</td>
     <td>${escapeHtml(entry.note || '—')}</td>
     <td class="ledger-image-cell">${renderLedgerImageButton(entry)}</td>
-    <td class="ledger-user-cell" title="${escapeHtml(creator)}">${escapeHtml(creator)}</td>
+    <td class="ledger-user-cell ledger-creator-cell" title="${escapeHtml(creator)}">
+      <span class="ledger-creator-desktop">${escapeHtml(creator)}</span>
+      <span class="ledger-creator-mobile">${escapeHtml(t('createdBy', { name: creator }))}</span>
+    </td>
     <td class="entry-actions">${actions}</td>
   </tr>`];
   }).join('');
@@ -1162,22 +1234,18 @@ function renderNewEntry() {
     </div>
 
     <section class="accounting-card">
-      ${canAddEntry ? `<form id="ledger-form" class="new-entry-form">
-        <div class="new-entry-person-row">
+      ${canAddEntry ? `<form id="ledger-form" class="entry-form new-entry-form">
+        <div class="entry-note-row">
+          <label class="field"><span>${escapeHtml(t('note'))}</span><input name="note" maxlength="160" placeholder="${escapeHtml(t('notePlaceholder'))}" /></label>
+          ${renderLedgerEntryImagePicker()}
+        </div>
+        <div class="entry-details-row">
           <label class="field"><span>${escapeHtml(t('debtor'))}</span><select name="debtorId" aria-label="${escapeHtml(t('debtor'))}">${accountOptions(profile.uid)}</select></label>
           <span class="debt-connector-inline" aria-hidden="true">${escapeHtml(t('debtConnector'))}</span>
           <label class="field"><span>${escapeHtml(t('creditor'))}</span><select name="creditorId" aria-label="${escapeHtml(t('creditor'))}">${accountOptions(creditorDefault, profile.uid)}</select></label>
-        </div>
-        <div class="new-entry-amount-row">
-          <label class="field"><span>${escapeHtml(t('amount'))}</span><input name="amount" type="number" min="0.01" step="0.01" inputmode="decimal" required /></label>
+          <label class="field entry-amount-field"><span>${escapeHtml(t('amount'))}</span><input name="amount" type="number" min="0.01" step="0.01" inputmode="decimal" required /></label>
           <label class="field"><span>${escapeHtml(t('currency'))}</span><select name="currency">${renderCurrencyOptions(entryCurrency)}</select></label>
-          <label class="file-picker new-entry-camera-button" title="${escapeHtml(t('takePhoto'))}">
-            <input class="sr-only" name="entryImageCamera" type="file" accept="image/*" capture="environment" />
-            <span aria-hidden="true">📷</span>
-            <span class="sr-only">${escapeHtml(t('takePhoto'))}</span>
-          </label>
         </div>
-        <label class="field"><span>${escapeHtml(t('note'))}</span><input name="note" maxlength="160" placeholder="${escapeHtml(t('notePlaceholder'))}" /></label>
         <button type="submit">${escapeHtml(t('saveEntry'))}</button>
       </form>` : `<p class="muted">${escapeHtml(t('needTwoUsers'))}</p>`}
     </section>
@@ -1486,8 +1554,10 @@ function bindLedgerRows() {
   const ledgerEditForm = document.querySelector('#ledger-edit-form');
   ledgerEditForm?.addEventListener('submit', updateLedgerEntry);
   ledgerEditForm?.elements.debtorId?.addEventListener('change', updateCreditorOptions);
+  bindLedgerEntryImagePicker(ledgerEditForm, editingLedgerEntryId);
   document.querySelectorAll('[data-edit-entry]').forEach((button) => {
     button.onclick = () => {
+      pendingLedgerEntryImages.delete(ledgerEntryImageKey(button.dataset.editEntry));
       editingLedgerEntryId = button.dataset.editEntry;
       selectedLedgerImageEntryId = '';
       selectedLedgerImageIndex = 0;
@@ -1497,6 +1567,9 @@ function bindLedgerRows() {
   });
   document.querySelectorAll('[data-cancel-edit-entry]').forEach((button) => {
     button.onclick = () => {
+      pendingLedgerEntryImages.delete(
+        ledgerEntryImageKey(button.dataset.cancelEditEntry),
+      );
       editingLedgerEntryId = '';
       render();
     };
@@ -1551,6 +1624,7 @@ function bind() {
   });
   document.querySelectorAll('[data-view]').forEach((button) => {
     button.onclick = () => {
+      pendingLedgerEntryImages.clear();
       activeView = button.dataset.view;
       selectedLedgerImageEntryId = '';
       selectedLedgerImageIndex = 0;
@@ -1573,6 +1647,7 @@ function bind() {
   const ledgerForm = document.querySelector('#ledger-form');
   ledgerForm?.addEventListener('submit', addLedgerEntry);
   ledgerForm?.elements.debtorId?.addEventListener('change', updateCreditorOptions);
+  bindLedgerEntryImagePicker(ledgerForm);
   bindLedgerFilter();
   bindLedgerRows();
   document.querySelector('#currency-result-currency')?.addEventListener('change', (event) => {
@@ -1817,7 +1892,8 @@ async function addLedgerEntry(event) {
     const amount = Number(form.get('amount'));
     const currency = normalizeCurrency(form.get('currency'));
     const note = String(form.get('note') || '').trim().slice(0, 160);
-    const imageFile = form.get('entryImageCamera');
+    const imageKey = ledgerEntryImageKey();
+    const imageFiles = pendingLedgerEntryImageFiles(imageKey);
     if (!debtorId || !creditorId || debtorId === creditorId) {
       setErrorNotice(t('differentPeople'));
       return;
@@ -1831,17 +1907,20 @@ async function addLedgerEntry(event) {
       return;
     }
 
-    const hasImage = imageFile instanceof File && imageFile.size > 0;
-    if (hasImage && !imageFile.type.startsWith('image/')) {
+    if (imageFiles.some((file) => (
+      !(file instanceof File)
+      || !file.type.startsWith('image/')
+    ))) {
       setErrorNotice(t('imageUnsupported'));
       return;
     }
 
-    let imageDataUrl = '';
-    if (hasImage) {
+    let imageDataUrls = [];
+    if (imageFiles.length) {
       try {
-        imageDataUrl = await compressLedgerImage(imageFile);
+        imageDataUrls = await compressLedgerImageFiles(imageFiles);
       } catch (error) {
+        pendingLedgerEntryImages.delete(imageKey);
         reportLedgerImageError(error);
         return;
       }
@@ -1860,7 +1939,7 @@ async function addLedgerEntry(event) {
       note,
     });
 
-    if (imageDataUrl) {
+    imageDataUrls.forEach((imageDataUrl) => {
       const imageReference = doc(collection(db, 'ledgerImages'));
       batch.set(imageReference, {
         createdAt: serverTimestamp(),
@@ -1868,9 +1947,10 @@ async function addLedgerEntry(event) {
         dataUrl: imageDataUrl,
         ledgerId: ledgerReference.id,
       });
-    }
+    });
 
     await batch.commit();
+    pendingLedgerEntryImages.delete(imageKey);
     formElement.reset();
     setNotice(t('entryAdded'));
   } catch (error) {
@@ -1890,6 +1970,8 @@ async function updateLedgerEntry(event) {
     const amount = Number(form.get('amount'));
     const currency = normalizeCurrency(form.get('currency'));
     const note = String(form.get('note') || '').trim().slice(0, 160);
+    const imageKey = ledgerEntryImageKey(entry.id);
+    const imageFiles = pendingLedgerEntryImageFiles(imageKey);
     if (!debtorId || !creditorId || debtorId === creditorId) {
       setErrorNotice(t('differentPeople'));
       return;
@@ -1903,13 +1985,46 @@ async function updateLedgerEntry(event) {
       return;
     }
 
-    await updateDoc(doc(db, 'ledger', entry.id), {
+    if (imageFiles.some((file) => (
+      !(file instanceof File)
+      || !file.type.startsWith('image/')
+    ))) {
+      setErrorNotice(t('imageUnsupported'));
+      return;
+    }
+
+    let imageDataUrls = [];
+    if (imageFiles.length) {
+      try {
+        imageDataUrls = await compressLedgerImageFiles(imageFiles);
+      } catch (error) {
+        pendingLedgerEntryImages.delete(imageKey);
+        reportLedgerImageError(error);
+        return;
+      }
+    }
+
+    const batch = writeBatch(db);
+    batch.update(doc(db, 'ledger', entry.id), {
       amount,
       creditorId,
       currency,
       debtorId,
       note,
     });
+
+    imageDataUrls.forEach((imageDataUrl) => {
+      const imageReference = doc(collection(db, 'ledgerImages'));
+      batch.set(imageReference, {
+        createdAt: serverTimestamp(),
+        createdBy: profile.uid,
+        dataUrl: imageDataUrl,
+        ledgerId: entry.id,
+      });
+    });
+
+    await batch.commit();
+    pendingLedgerEntryImages.delete(imageKey);
     editingLedgerEntryId = '';
     setNotice(t('entryUpdated'));
   } catch (error) {
@@ -2104,6 +2219,7 @@ async function clearAllLedgerData() {
   try {
     const entriesRemoved = await deleteCollectionDocuments('ledger');
     const imagesRemoved = await deleteCollectionDocuments('ledgerImages');
+    pendingLedgerEntryImages.clear();
     selectedLedgerImageEntryId = '';
     selectedLedgerImageIndex = 0;
     editingLedgerEntryId = '';
@@ -2133,6 +2249,7 @@ async function removeLedgerEntry(entryId) {
     if (editingLedgerEntryId === entryId) {
       editingLedgerEntryId = '';
     }
+    pendingLedgerEntryImages.delete(ledgerEntryImageKey(entryId));
     await batch.commit();
     setNotice(t('entryRemoved'));
   } catch (error) {
@@ -2298,6 +2415,7 @@ onAuthStateChanged(auth, (user) => {
   adminCurrencySettings = null;
   initialCurrencyRatesSeeded = false;
   pendingLedgerImageFocus = null;
+  pendingLedgerEntryImages.clear();
 
   if (!user) {
     render();

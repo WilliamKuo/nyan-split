@@ -231,29 +231,66 @@ input[readonly] {
   margin-top: 1.35rem;
 }
 
-.new-entry-form {
+.entry-form {
   display: grid;
   gap: .9rem;
+}
+
+.new-entry-form {
   margin-top: 1.35rem;
 }
 
-.new-entry-person-row {
+.entry-note-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: end;
   gap: .75rem;
 }
 
-.new-entry-amount-row {
+.entry-details-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(6rem, 7rem) auto;
+  grid-template-columns:
+    minmax(0, 1fr)
+    auto
+    minmax(0, 1fr)
+    minmax(4.25rem, .75fr)
+    minmax(4rem, .65fr);
   align-items: end;
   gap: .75rem;
 }
 
-.new-entry-camera-button {
+.entry-note-row > *,
+.entry-details-row > * {
+  min-width: 0;
+}
+
+.entry-camera-button {
+  position: relative;
   width: 44px;
   padding: .6rem;
+}
+
+.entry-image-count {
+  position: absolute;
+  top: -.45rem;
+  right: -.45rem;
+  display: inline-flex;
+  min-width: 1.3rem;
+  height: 1.3rem;
+  align-items: center;
+  justify-content: center;
+  padding: 0 .25rem;
+  color: #1a1120;
+  background: var(--rose);
+  border-radius: 999px;
+  box-shadow: 0 2px 8px rgb(0 0 0 / 35%);
+  font-size: .68rem;
+  font-weight: 850;
+  line-height: 1;
+}
+
+.entry-image-count[hidden] {
+  display: none;
 }
 
 .field {
@@ -550,10 +587,12 @@ input[readonly] {
   margin-bottom: 1rem;
 }
 
+.ledger-creator-mobile {
+  display: none;
+}
+
 .ledger-edit-form {
-  display: grid;
   width: min(100%, 34rem);
-  gap: .9rem;
   margin: 0;
 }
 
@@ -561,27 +600,13 @@ input[readonly] {
   min-width: 0;
 }
 
-.ledger-edit-person-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
-  align-items: end;
-  gap: .75rem;
-}
-
-.ledger-edit-amount-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(6rem, 7rem);
-  align-items: end;
-  gap: .75rem;
-}
-
-.ledger-edit-amount-field input[type="number"] {
+.entry-amount-field input[type="number"] {
   appearance: textfield;
   -moz-appearance: textfield;
 }
 
-.ledger-edit-amount-field input[type="number"]::-webkit-inner-spin-button,
-.ledger-edit-amount-field input[type="number"]::-webkit-outer-spin-button {
+.entry-amount-field input[type="number"]::-webkit-inner-spin-button,
+.entry-amount-field input[type="number"]::-webkit-outer-spin-button {
   margin: 0;
   -webkit-appearance: none;
 }
@@ -1312,31 +1337,35 @@ html[data-theme="light"] .app-nav {
 }
 
 @media (max-width: 500px) {
-  .new-entry-form {
+  .entry-form {
     gap: .75rem;
+  }
+
+  .new-entry-form {
     margin-top: 1rem;
   }
 
-  .new-entry-person-row {
-    gap: .75rem;
-  }
-
-  .new-entry-amount-row {
+  .entry-note-row {
     gap: .5rem;
   }
 
-  .new-entry-person-row > *,
-  .new-entry-amount-row > * {
-    min-width: 0;
+  .entry-details-row {
+    grid-template-columns:
+      minmax(0, 1fr)
+      auto
+      minmax(0, 1fr)
+      minmax(4rem, .75fr)
+      minmax(3.75rem, .65fr);
+    gap: .4rem;
   }
 
-  .new-entry-person-row select,
-  .ledger-edit-person-row select,
-  .ledger-edit-amount-row input,
-  .ledger-edit-amount-row select,
-  .new-entry-amount-row input,
-  .new-entry-amount-row select {
-    padding-inline: .5rem;
+  .entry-details-row input,
+  .entry-details-row select {
+    padding-inline: .4rem;
+  }
+
+  .entry-details-row .field {
+    font-size: .72rem;
   }
 
   .debt-connector-inline {
@@ -1412,13 +1441,15 @@ html[data-theme="light"] .app-nav {
 
   .ledger-table tbody tr {
     display: grid;
-    grid-template-columns: 1fr auto;
+    grid-template-columns:
+      minmax(0, 1fr)
+      auto
+      auto;
     grid-template-areas:
-      "people  image"
-      "amount  currency"
-      "note    note"
-      "creator creator"
-      "actions actions";
+      "note    note    image"
+      "people  amount  currency"
+      "creator creator creator"
+      "actions actions actions";
     gap: .35rem .6rem;
     padding: .75rem .85rem;
     background: var(--surface-raised);
@@ -1506,12 +1537,20 @@ html[data-theme="light"] .app-nav {
   }
 
   /* Creator cell */
-  .ledger-table tbody tr td.ledger-user-cell:nth-child(9) {
+  .ledger-table tbody tr td.ledger-creator-cell {
     grid-area: creator;
     overflow: visible;
     color: var(--muted);
     font-size: .75rem;
     white-space: normal;
+  }
+
+  .ledger-creator-desktop {
+    display: none;
+  }
+
+  .ledger-creator-mobile {
+    display: inline;
   }
 
   /* Actions cell */
