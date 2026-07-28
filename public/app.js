@@ -42,6 +42,7 @@ const IMAGE_MAX_BYTES = 500 * 1024;
 const BATCH_DELETE_LIMIT = 400;
 const MAX_LEDGER_SPLITS = 12;
 const NEW_LEDGER_ENTRY_IMAGE_KEY = 'new-entry';
+const GOOGLE_PROVIDER_ID = 'google.com';
 const JPEG_QUALITIES = [
   .78,
   .68,
@@ -87,9 +88,10 @@ let ledgerEntriesReady = false;
 let ledgerSplitsReady = false;
 let ledgerFilter = '';
 let ledgerImages = new Map();
-let activeUsers = [];
+let selectableUsers = [];
 let knownUsers = [];
 let managedUsers = [];
+let googleVerifiedUserIds = new Set();
 let calculatedSettlements = null;
 let notice = '';
 let noticeType = 'info';
@@ -114,6 +116,7 @@ let stopLedger;
 let stopLedgerSplits;
 let stopLedgerImages;
 let stopUsers;
+let stopUserAuth;
 let deferredInstallPrompt = null;
 let appInstalled = window.matchMedia('(display-mode: standalone)').matches
   || window.navigator.standalone === true;
@@ -126,7 +129,7 @@ const pendingLedgerEntryImages = new Map();
 window.addEventListener('beforeinstallprompt', (event) => {
   event.preventDefault();
   deferredInstallPrompt = event;
-  if (authUser && profile?.status === 'active' && activeView === 'share') render();
+  if (authUser && isActiveUser(profile) && activeView === 'share') render();
 });
 
 window.addEventListener('appinstalled', () => {
@@ -209,12 +212,49 @@ function defaultAlias() {
     || t('newUser');
 }
 
+function authUserHasGoogleIdentity(user = authUser) {
+  return Boolean(user?.providerData?.some(
+    (provider) => provider.providerId === GOOGLE_PROVIDER_ID,
+  ));
+}
+
+function isEnabledUser(user) {
+  return user?.disabled !== true;
+}
+
+function isActiveUser(user) {
+  return user?.status === 'active' && isEnabledUser(user);
+}
+
+function isSelectableLedgerUser(user) {
+  return isActiveUser(user) && user.ledgerSelectable !== false;
+}
+
+function currentUserIsAdmin() {
+  return Boolean(
+    authUser
+    && profile?.uid === authUser.uid
+    && isActiveUser(profile)
+    && profile.role === 'admin'
+    && authUserHasGoogleIdentity(authUser),
+  );
+}
+
+function userHasVerifiedGoogleIdentity(userId) {
+  return googleVerifiedUserIds.has(userId)
+    || (userId === authUser?.uid && authUserHasGoogleIdentity(authUser));
+}
+
 function userAlias(user) {
   return user?.alias || user?.name || user?.email?.split('@')[0] || t('unknownUser');
 }
 
 function knownUserById(userId) {
   return knownUsers.find((user) => user.id === userId) || null;
+}
+
+function selectableUserById(userId) {
+  return selectableUsers.find((user) => user.id === userId) || null;
 }
 
 function userPhotoUrl(user) {
@@ -479,19 +519,24 @@ function renderRegistration() {
 }
 
 function renderPending() {
-  const statusContent = {
-    rejected: {
-      heading: t('rejected'),
-      text: t('rejectedText'),
-    },
-    removed: {
-      heading: t('removed'),
-      text: t('removedText'),
-    },
-  }[profile.status] || {
-    heading: t('pending'),
-    text: t('pendingText'),
-  };
+  const statusContent = profile.disabled === true
+    ? {
+      heading: t('disabled'),
+      text: t('disabledText'),
+    }
+    : {
+      rejected: {
+        heading: t('rejected'),
+        text: t('rejectedText'),
+      },
+      removed: {
+        heading: t('removed'),
+        text: t('removedText'),
+      },
+    }[profile.status] || {
+      heading: t('pending'),
+      text: t('pendingText'),
+    };
   root.innerHTML = authFrame(`
     <p class="eyebrow">${escapeHtml(userAlias(profile))}</p>
     <h2>${escapeHtml(statusContent.heading)}</h2>
@@ -695,7 +740,7 @@ async function seedInitialCurrencyRates() {
     seedingCurrencyRates
     || initialCurrencyRatesSeeded
     || !profile?.uid
-    || profile.status !== 'active'
+    || !isActiveUser(profile)
     || profile.currencyRates !== undefined
   ) {
     return;
@@ -744,7 +789,7 @@ function resultCopy(amount, currency = profileCurrency()) {
 }
 
 function accountOptions(selectedUserId, excludedUserId = '') {
-  const users = [...activeUsers];
+  const users = [...selectableUsers];
   const selectedUser = knownUserById(selectedUserId);
   if (selectedUser && !users.some((user) => user.id === selectedUserId)) {
     users.push(selectedUser);
@@ -824,10 +869,10 @@ function nextSplitDraftId() {
 }
 
 function createLedgerNewDraft() {
-  const creditorId = activeUsers.some((user) => user.id === profile.uid)
+  const creditorId = selectableUsers.some((user) => user.id === profile.uid)
     ? profile.uid
-    : activeUsers[0]?.id || '';
-  const debtor = activeUsers.find((user) => user.id !== creditorId);
+    : selectableUsers[0]?.id || '';
+  const debtor = selectableUsers.find((user) => user.id !== creditorId);
   return {
     creditorId,
     currency: normalizeCurrency(settings.defaultCurrency) || DEFAULT_CURRENCY,
@@ -905,10 +950,10 @@ function captureLedgerEditDraft(form) {
 }
 
 function availableLedgerDebtor(draft, usedDebtorIds = new Set()) {
-  if (!activeUsers.some((user) => user.id === draft?.creditorId)) {
+  if (!selectableUsers.some((user) => user.id === draft?.creditorId)) {
     return null;
   }
-  return activeUsers.find((user) => (
+  return selectableUsers.find((user) => (
     user.id !== draft.creditorId
     && !usedDebtorIds.has(user.id)
   )) || null;
@@ -919,7 +964,7 @@ function reconcileLedgerNewDraftDebtors() {
 
   const usedDebtorIds = new Set();
   ledgerNewDraft.splits.forEach((split) => {
-    const debtorIsAvailable = activeUsers.some((user) => (
+    const debtorIsAvailable = selectableUsers.some((user) => (
       user.id === split.debtorId
       && user.id !== ledgerNewDraft.creditorId
     )) && !usedDebtorIds.has(split.debtorId);
@@ -944,7 +989,7 @@ function updateNewEntryCreditor(event) {
 function addNewLedgerSplitDraft(form) {
   if (!ledgerNewDraft) return;
   captureLedgerNewDraft(form);
-  if (!activeUsers.some((user) => user.id === ledgerNewDraft.creditorId)) {
+  if (!selectableUsers.some((user) => user.id === ledgerNewDraft.creditorId)) {
     setErrorNotice(t('inactivePayerCannotAddDebt'));
     return;
   }
@@ -986,7 +1031,7 @@ function removeNewLedgerSplitDraft(form, draftId) {
 function addLedgerSplitDraft(form) {
   if (!ledgerEditDraft) return;
   captureLedgerEditDraft(form);
-  if (!activeUsers.some((user) => user.id === ledgerEditDraft.creditorId)) {
+  if (!selectableUsers.some((user) => user.id === ledgerEditDraft.creditorId)) {
     setErrorNotice(t('inactivePayerCannotAddDebt'));
     return;
   }
@@ -1040,7 +1085,7 @@ function removeLedgerSplitDraft(form, draftId) {
 }
 
 function canManageEntry(entry) {
-  return entry.createdBy === profile.uid || profile.role === 'admin';
+  return entry.createdBy === profile.uid || currentUserIsAdmin();
 }
 
 function isValidLedgerImageDataUrl(dataUrl) {
@@ -1355,7 +1400,7 @@ function renderSettlementSummary(myBalance) {
     })
     : '';
   const balanceUsers = knownUsers.filter((user) => (
-    user.status === 'active' || balances.has(user.id)
+    isSelectableLedgerUser(user) || balances.has(user.id)
   ));
   const balanceRows = balanceUsers.map((user) => {
     const amount = balances.get(user.id) || 0;
@@ -1625,7 +1670,7 @@ function refreshLedgerRows() {
 }
 
 function renderNewEntry() {
-  const canAddEntry = activeUsers.length > 1;
+  const canAddEntry = selectableUsers.length > 1;
   if (canAddEntry && !ledgerNewDraft) {
     ledgerNewDraft = createLedgerNewDraft();
   }
@@ -1786,7 +1831,7 @@ function renderLedger() {
 }
 
 function renderAccount() {
-  const isAdmin = profile.role === 'admin';
+  const isAdmin = currentUserIsAdmin();
   const adminContent = isAdmin ? `
     ${renderAdminUsers()}
     ${renderAdminLedgerData()}
@@ -1850,14 +1895,51 @@ function renderShare() {
   </section>`;
 }
 
-function statusBadge(status) {
+function statusBadge(user) {
+  const status = user.disabled === true && user.status === 'active'
+    ? 'disabled'
+    : user.status || 'pending';
   const statusKey = {
     active: 'statusActive',
+    disabled: 'statusDisabled',
     pending: 'statusPending',
     rejected: 'statusRejected',
     removed: 'statusRemoved',
   }[status] || 'statusPending';
   return `<span class="status-badge status-${escapeHtml(status)}">${escapeHtml(t(statusKey))}</span>`;
+}
+
+function renderUserRoleControl(user) {
+  const googleVerified = userHasVerifiedGoogleIdentity(user.id);
+  const canChangeRole = user.id !== profile.uid && user.status === 'active';
+  return `<select
+    class="admin-user-role"
+    data-user-role="${escapeHtml(user.id)}"
+    aria-label="${escapeHtml(`${t('role')}: ${userAlias(user)}`)}"
+    ${canChangeRole ? '' : 'disabled'}
+  >
+    <option value="user"${user.role === 'admin' ? '' : ' selected'}>${escapeHtml(t('roleUser'))}</option>
+    <option
+      value="admin"
+      ${user.role === 'admin' ? 'selected' : ''}
+      ${googleVerified ? '' : 'disabled'}
+    >${escapeHtml(t('roleAdmin'))}</option>
+  </select>`;
+}
+
+function renderUserLedgerSelectableControl(user) {
+  const canChangeLedgerSelection = user.status === 'active';
+  return `<label class="admin-user-ledger-toggle">
+    <input
+      type="checkbox"
+      role="switch"
+      data-user-ledger-selectable="${escapeHtml(user.id)}"
+      aria-label="${escapeHtml(`${t('ledgerSelectable')}: ${userAlias(user)}`)}"
+      ${user.ledgerSelectable === false ? '' : 'checked'}
+      ${canChangeLedgerSelection ? '' : 'disabled'}
+    />
+    <span>${escapeHtml(t('ledgerSelectable'))}</span>
+  </label>`;
 }
 
 function renderUserActions(user) {
@@ -1876,6 +1958,11 @@ function renderUserActions(user) {
     actions.push(
       `<button type="button" data-user-status="active" data-user-id="${escapeHtml(user.id)}">${escapeHtml(t('restoreUser'))}</button>`,
     );
+  } else if (user.status === 'active' && user.id !== profile.uid) {
+    const nextDisabled = user.disabled === true ? 'false' : 'true';
+    actions.push(
+      `<button class="secondary-button" type="button" data-user-disabled="${nextDisabled}" data-user-id="${escapeHtml(user.id)}">${escapeHtml(t(user.disabled === true ? 'enableUser' : 'disableUser'))}</button>`,
+    );
   }
 
   if (user.id !== profile.uid && user.status !== 'removed') {
@@ -1888,19 +1975,25 @@ function renderUserActions(user) {
 }
 
 function renderUserRows() {
-  return managedUsers.map((user) => `<tr>
-    <td>
-      <div style="display: flex; align-items: center; gap: .75rem;">
-        ${renderUserAvatar(user)}
-        <div style="min-width: 0; overflow: hidden; text-overflow: ellipsis;">
-          <strong>${escapeHtml(userAlias(user))}</strong><br />
-          <span class="muted">${escapeHtml(user.email || 'N/A')}</span>
+  return managedUsers.map((user) => {
+    const googleVerified = userHasVerifiedGoogleIdentity(user.id);
+    return `<tr>
+      <td>
+        <div style="display: flex; align-items: center; gap: .75rem;">
+          ${renderUserAvatar(user)}
+          <div style="min-width: 0; overflow: hidden; text-overflow: ellipsis;">
+            <strong>${escapeHtml(userAlias(user))}</strong><br />
+            <span class="muted">${escapeHtml(user.email || 'N/A')}</span><br />
+            <span class="admin-user-provider${googleVerified ? ' google-verified' : ''}">${escapeHtml(t(googleVerified ? 'googleVerified' : 'googleVerificationRequired'))}</span>
+          </div>
         </div>
-      </div>
-    </td>
-    <td>${statusBadge(user.status || 'pending')}</td>
-    <td class="user-actions">${renderUserActions(user)}</td>
-  </tr>`).join('');
+      </td>
+      <td>${renderUserRoleControl(user)}</td>
+      <td>${renderUserLedgerSelectableControl(user)}</td>
+      <td>${statusBadge(user)}</td>
+      <td class="user-actions">${renderUserActions(user)}</td>
+    </tr>`;
+  }).join('');
 }
 
 function renderAdminCurrencySettings(adminSettings) {
@@ -1928,7 +2021,7 @@ function renderAdminUsers() {
         <button type="submit" class="secondary-button">${escapeHtml(t('addUser'))}</button>
       </form>
       <div class="table-wrap"><table class="admin-users-table">
-        <thead><tr><th>${escapeHtml(t('user'))}</th><th>${escapeHtml(t('status'))}</th><th>${escapeHtml(t('actions'))}</th></tr></thead>
+        <thead><tr><th>${escapeHtml(t('user'))}</th><th>${escapeHtml(t('role'))}</th><th>${escapeHtml(t('ledgerSelectable'))}</th><th>${escapeHtml(t('status'))}</th><th>${escapeHtml(t('actions'))}</th></tr></thead>
         <tbody>${renderUserRows()}</tbody>
       </table></div>
     </section>`;
@@ -2017,7 +2110,7 @@ function render() {
     return;
   }
 
-  if (profile.status !== 'active') {
+  if (!isActiveUser(profile)) {
     renderPending();
     return;
   }
@@ -2223,6 +2316,24 @@ function bind() {
   document.querySelectorAll('[data-user-status]').forEach((button) => {
     button.onclick = () => updateUserStatus(button.dataset.userId, button.dataset.userStatus);
   });
+  document.querySelectorAll('[data-user-role]').forEach((select) => {
+    select.onchange = () => updateUserRole(
+      select.dataset.userRole,
+      select.value,
+    );
+  });
+  document.querySelectorAll('[data-user-ledger-selectable]').forEach((input) => {
+    input.onchange = () => updateUserLedgerSelectable(
+      input.dataset.userLedgerSelectable,
+      input.checked,
+    );
+  });
+  document.querySelectorAll('[data-user-disabled]').forEach((button) => {
+    button.onclick = () => updateUserDisabled(
+      button.dataset.userId,
+      button.dataset.userDisabled === 'true',
+    );
+  });
   document.querySelectorAll('[data-remove-user]').forEach((button) => {
     button.onclick = () => removeUser(button.dataset.removeUser);
   });
@@ -2325,13 +2436,27 @@ async function installApp() {
   setNotice(choice.outcome === 'accepted' ? t('installStarted') : t('installDismissed'));
 }
 
+async function ensureGoogleAuthVerification(user) {
+  if (!authUserHasGoogleIdentity(user)) return;
+
+  try {
+    await setDoc(doc(db, 'userAuth', user.uid), {
+      provider: GOOGLE_PROVIDER_ID,
+    });
+  } catch (error) {
+    console.warn('Could not verify the Google sign-in provider.', error);
+  }
+}
+
 async function completeRegistration(event) {
   event.preventDefault();
   try {
     const alias = cleanAlias(new FormData(event.currentTarget).get('alias')) || defaultAlias();
     await setDoc(doc(db, 'users', authUser.uid), {
       alias,
+      disabled: false,
       email: authUser.email || '',
+      ledgerSelectable: true,
       photoURL: authUser.photoURL || '',
       resultCurrency: settings.defaultCurrency || DEFAULT_CURRENCY,
       role: 'user',
@@ -2356,7 +2481,9 @@ async function addAdminUser(event) {
     }
     await setDoc(doc(collection(db, 'users')), {
       alias,
+      disabled: false,
       email: '',
+      ledgerSelectable: true,
       photoURL: '',
       resultCurrency: currentAdminCurrencySettings().defaultCurrency,
       role: 'user',
@@ -2458,6 +2585,15 @@ async function addLedgerEntry(event) {
       ))
     ) {
       setErrorNotice(t('differentPeople'));
+      return;
+    }
+    if (
+      !selectableUserById(creditorId)
+      || normalizedSplits.some(
+        (split) => !selectableUserById(split.debtorId),
+      )
+    ) {
+      setErrorNotice(t('ledgerParticipantUnavailable'));
       return;
     }
     if (normalizedSplits.some((split) => (
@@ -2585,6 +2721,19 @@ async function updateLedgerEntry(event) {
       || split.debtorId === entry.creditorId
     ))) {
       setErrorNotice(t('differentPeople'));
+      return;
+    }
+    const newSplits = normalizedSplits.filter((split) => !split.id);
+    if (
+      newSplits.length
+      && (
+        !selectableUserById(entry.creditorId)
+        || newSplits.some(
+          (split) => !selectableUserById(split.debtorId),
+        )
+      )
+    ) {
+      setErrorNotice(t('ledgerParticipantUnavailable'));
       return;
     }
     if (normalizedSplits.some((split) => (
@@ -2812,7 +2961,19 @@ async function saveAppSettings(event) {
 async function updateUserStatus(userId, status) {
   try {
     const user = managedUsers.find((item) => item.id === userId);
+    if (
+      !currentUserIsAdmin()
+      || !user
+      || userId === profile.uid
+      || ![
+        'active',
+        'rejected',
+      ].includes(status)
+    ) {
+      return;
+    }
     await updateDoc(doc(db, 'users', userId), {
+      ...(status === 'active' ? { disabled: false } : {}),
       status,
       updatedAt: serverTimestamp(),
     });
@@ -2824,15 +2985,97 @@ async function updateUserStatus(userId, status) {
   }
 }
 
+async function updateUserRole(userId, role) {
+  const user = managedUsers.find((item) => item.id === userId);
+  if (
+    !currentUserIsAdmin()
+    || !user
+    || userId === profile.uid
+    || user.status !== 'active'
+    || ![
+      'user',
+      'admin',
+    ].includes(role)
+    || user.role === role
+  ) {
+    return;
+  }
+  if (role === 'admin' && !userHasVerifiedGoogleIdentity(userId)) {
+    setErrorNotice(t('googleVerificationRequired'));
+    return;
+  }
+
+  try {
+    await updateDoc(doc(db, 'users', userId), {
+      role,
+      updatedAt: serverTimestamp(),
+    });
+    setNotice(t('userRoleUpdated'));
+  } catch (error) {
+    reportError(error);
+  }
+}
+
+async function updateUserLedgerSelectable(userId, ledgerSelectable) {
+  const user = managedUsers.find((item) => item.id === userId);
+  if (
+    !currentUserIsAdmin()
+    || !user
+    || user.status !== 'active'
+    || (user.ledgerSelectable !== false) === ledgerSelectable
+  ) {
+    return;
+  }
+
+  try {
+    await updateDoc(doc(db, 'users', userId), {
+      ledgerSelectable,
+      updatedAt: serverTimestamp(),
+    });
+    setNotice(t('ledgerSelectableUpdated'));
+  } catch (error) {
+    reportError(error);
+  }
+}
+
+async function updateUserDisabled(userId, disabled) {
+  const user = managedUsers.find((item) => item.id === userId);
+  if (
+    !currentUserIsAdmin()
+    || !user
+    || userId === profile.uid
+    || user.status !== 'active'
+    || (user.disabled === true) === disabled
+  ) {
+    return;
+  }
+  if (disabled && !window.confirm(t('disableUserConfirm', {
+    name: userAlias(user),
+  }))) {
+    return;
+  }
+
+  try {
+    await updateDoc(doc(db, 'users', userId), {
+      disabled,
+      updatedAt: serverTimestamp(),
+    });
+    setNotice(t(disabled ? 'userDisabled' : 'userEnabled'));
+  } catch (error) {
+    reportError(error);
+  }
+}
+
 async function removeUser(userId) {
   const user = managedUsers.find((item) => item.id === userId);
-  if (!user || userId === profile.uid) return;
+  if (!currentUserIsAdmin() || !user || userId === profile.uid) return;
   if (!window.confirm(t('removeUserConfirm', { name: userAlias(user) }))) return;
 
   try {
     if (user.status === 'active') {
       await updateDoc(doc(db, 'users', userId), {
         currencyRates: {},
+        disabled: false,
         email: '',
         photoURL: '',
         role: 'user',
@@ -2863,7 +3106,7 @@ async function deleteCollectionDocuments(collectionName) {
 }
 
 async function clearAllLedgerData() {
-  if (profile?.role !== 'admin' || isClearingLedgerData) return;
+  if (!currentUserIsAdmin() || isClearingLedgerData) return;
   if (!window.confirm(t('clearAllLedgerDataConfirm'))) return;
   if (!window.confirm(t('clearAllLedgerDataFinalConfirm'))) return;
 
@@ -2964,10 +3207,12 @@ function stopActiveListeners() {
   stopLedgerSplits?.();
   stopLedgerImages?.();
   stopUsers?.();
+  stopUserAuth?.();
   stopLedger = undefined;
   stopLedgerSplits = undefined;
   stopLedgerImages = undefined;
   stopUsers = undefined;
+  stopUserAuth = undefined;
   ledgerEntries = [];
   ledgerSplits = [];
   ledgerEntriesReady = false;
@@ -2975,15 +3220,17 @@ function stopActiveListeners() {
   ledgerImages = new Map();
   discardLedgerEditDraft();
   discardLedgerNewDraft();
-  activeUsers = [];
+  selectableUsers = [];
   knownUsers = [];
   managedUsers = [];
+  googleVerifiedUserIds = new Set();
   clearCalculatedSettlements();
 }
 
 function watchActiveData() {
   stopActiveListeners();
-  const usersSource = profile.role === 'admin'
+  const isAdmin = currentUserIsAdmin();
+  const usersSource = isAdmin
     ? collection(db, 'users')
     : query(
       collection(db, 'users'),
@@ -2999,10 +3246,21 @@ function watchActiveData() {
       }))
       .sort((left, right) => userAlias(left).localeCompare(userAlias(right)));
     knownUsers = users.filter((user) => LEDGER_USER_STATUSES.includes(user.status));
-    activeUsers = knownUsers.filter((user) => user.status === 'active');
-    managedUsers = profile.role === 'admin' ? users : [];
+    selectableUsers = knownUsers.filter(isSelectableLedgerUser);
+    managedUsers = isAdmin ? users : [];
     render();
   }, listenerError('Users'));
+
+  if (isAdmin) {
+    stopUserAuth = onSnapshot(collection(db, 'userAuth'), (snapshot) => {
+      googleVerifiedUserIds = new Set(
+        snapshot.docs
+          .filter((item) => item.data().provider === GOOGLE_PROVIDER_ID)
+          .map((item) => item.id),
+      );
+      render();
+    }, listenerError('Google user verification'));
+  }
 
   stopLedger = onSnapshot(collection(db, 'ledger'), (snapshot) => {
     clearCalculatedSettlements();
@@ -3123,13 +3381,14 @@ onAuthStateChanged(auth, (user) => {
   }
 
   render();
+  void ensureGoogleAuthVerification(user);
 
   stopSettings = onSnapshot(settingsReference, (snapshot) => {
     clearCalculatedSettlements();
     const nextSettings = snapshot.exists() ? snapshot.data() : {};
     settings = normalizeSettings(nextSettings);
     adminCurrencySettings = null;
-    if (profile?.status === 'active') {
+    if (isActiveUser(profile)) {
       void seedInitialCurrencyRates();
     }
     render();
@@ -3151,7 +3410,7 @@ onAuthStateChanged(auth, (user) => {
       uid: user.uid,
       ...snapshot.data(),
     };
-    if (profile.status === 'active') {
+    if (isActiveUser(profile)) {
       watchActiveData();
       void seedInitialCurrencyRates();
     } else stopActiveListeners();

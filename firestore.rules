@@ -3,12 +3,32 @@ service cloud.firestore {
   match /databases/{database}/documents {
     function signedIn() { return request.auth != null; }
     function user() { return get(/databases/$(database)/documents/users/$(request.auth.uid)); }
+    function googleIdentity() {
+      return signedIn()
+        && request.auth.token.firebase.get('identities', {}).keys()
+          .hasAny([
+            'google.com'
+          ]);
+    }
+    function googleVerified(userId) {
+      return exists(/databases/$(database)/documents/userAuth/$(userId))
+        && get(/databases/$(database)/documents/userAuth/$(userId)).data.provider
+          == 'google.com';
+    }
+    function enabled(data) {
+      return data.get('disabled', false) == false;
+    }
     function active() {
       return signedIn()
         && exists(/databases/$(database)/documents/users/$(request.auth.uid))
-        && user().data.status == 'active';
+        && user().data.status == 'active'
+        && enabled(user().data);
     }
-    function admin() { return active() && user().data.role == 'admin'; }
+    function admin() {
+      return active()
+        && user().data.role == 'admin'
+        && googleIdentity();
+    }
     function validCurrency(currency) {
       return currency is string && currency.matches('^[A-Z]{3}$');
     }
@@ -40,17 +60,107 @@ service cloud.firestore {
         && (!data.keys().hasAll(['currencyRates'])
           || data.currencyRates is map);
     }
+    function validUserFlags(data) {
+      return data.get('disabled', false) is bool
+        && data.get('ledgerSelectable', true) is bool;
+    }
+    function validUserStatus(status) {
+      return status == 'pending'
+        || status == 'active'
+        || status == 'rejected'
+        || status == 'removed';
+    }
+    function validAdminStatusTransition(data, existingData) {
+      return data.status == existingData.status
+        || (existingData.status == 'pending'
+          && (
+            data.status == 'active'
+            || data.status == 'rejected'
+          ))
+        || (existingData.status == 'rejected'
+          && data.status == 'active')
+        || (existingData.status == 'removed'
+          && data.status == 'active');
+    }
+    function validAdminRole(userId, data, existingData) {
+      return data.role == 'user'
+        || (
+          data.role == 'admin'
+          && data.status == 'active'
+          && (
+            existingData.role == 'admin'
+            || googleVerified(userId)
+          )
+        );
+    }
+    function validAdminUserUpdate(userId, data, existingData) {
+      let affectedKeys = data.diff(existingData).affectedKeys();
+      return affectedKeys.hasOnly([
+          'disabled',
+          'ledgerSelectable',
+          'role',
+          'status',
+          'updatedAt'
+        ])
+        && validAdminRole(userId, data, existingData)
+        && validUserStatus(data.status)
+        && validUserFlags(data)
+        && validAdminStatusTransition(data, existingData)
+        && (data.status != 'removed' || existingData.status == 'removed')
+        && data.updatedAt == request.time
+        && (
+          userId != request.auth.uid
+          || !affectedKeys.hasAny([
+            'disabled',
+            'role',
+            'status'
+          ])
+        );
+    }
+    function validAdminRemoval(data, existingData) {
+      return existingData.status == 'active'
+        && data.status == 'removed'
+        && data.role == 'user'
+        && data.get('disabled', false) == false
+        && data.email == ''
+        && data.photoURL == ''
+        && data.currencyRates is map
+        && data.currencyRates.size() == 0
+        && validUserFlags(data)
+        && data.updatedAt == request.time
+        && data.diff(existingData).affectedKeys().hasOnly([
+          'currencyRates',
+          'disabled',
+          'email',
+          'photoURL',
+          'role',
+          'status',
+          'updatedAt'
+        ]);
+    }
     function activeUser(userId) {
-      return exists(/databases/$(database)/documents/users/$(userId))
-        && get(/databases/$(database)/documents/users/$(userId)).data.status == 'active';
+      let ledgerUser = get(
+        /databases/$(database)/documents/users/$(userId)
+      );
+      return ledgerUser.data.status == 'active';
+    }
+    function selectableLedgerUser(userId) {
+      let ledgerUser = get(
+        /databases/$(database)/documents/users/$(userId)
+      );
+      return ledgerUser.data.status == 'active'
+        && enabled(ledgerUser.data)
+        && ledgerUser.data.get('ledgerSelectable', true) == true;
     }
     function visibleLedgerUser(data) {
       return data.status == 'active' || data.status == 'removed';
     }
     function retainedLedgerUser(userId, existingUserId) {
+      let ledgerUser = get(
+        /databases/$(database)/documents/users/$(userId)
+      );
       return userId == existingUserId
-        && exists(/databases/$(database)/documents/users/$(userId))
-        && get(/databases/$(database)/documents/users/$(userId)).data.status == 'removed';
+        && ledgerUser.data.status == 'removed';
     }
     function validLedgerHeaderKeys(data) {
       return data.keys().hasOnly([
@@ -74,7 +184,7 @@ service cloud.firestore {
       return validLedgerHeaderKeys(data)
         && data.createdBy == request.auth.uid
         && data.creditorId is string
-        && activeUser(data.creditorId)
+        && selectableLedgerUser(data.creditorId)
         && allowedCurrency(data.currency)
         && data.note is string
         && data.note.size() <= 160
@@ -149,25 +259,70 @@ service cloud.firestore {
         && request.resource.data.status == 'pending'
         && request.resource.data.role == 'user'
         && validAlias(request.resource.data.alias)
-        && allowedCurrency(request.resource.data.resultCurrency))
+        && allowedCurrency(request.resource.data.resultCurrency)
+        && validUserFlags(request.resource.data)
+        && request.resource.data.get('disabled', false) == false
+        && request.resource.data.get('ledgerSelectable', true) == true)
         || (admin()
         && request.resource.data.status == 'active'
         && request.resource.data.role == 'user'
         && validAlias(request.resource.data.alias)
-        && allowedCurrency(request.resource.data.resultCurrency));
+        && allowedCurrency(request.resource.data.resultCurrency)
+        && validUserFlags(request.resource.data)
+        && request.resource.data.get('disabled', false) == false
+        && request.resource.data.get('ledgerSelectable', true) == true);
       allow get: if (signedIn() && request.auth.uid == userId)
         || admin()
         || (active() && visibleLedgerUser(resource.data));
       allow list: if admin()
         || (active() && visibleLedgerUser(resource.data));
-      allow update: if admin()
+      allow update: if (admin()
+          && (
+            validAdminUserUpdate(
+              userId,
+              request.resource.data,
+              resource.data
+            )
+            || (
+              userId != request.auth.uid
+              && validAdminRemoval(
+                request.resource.data,
+                resource.data
+              )
+            )
+          ))
         || (signedIn() && request.auth.uid == userId
           && resource.data.status != 'removed'
+          && enabled(resource.data)
           && request.resource.data.diff(resource.data).affectedKeys()
-            .hasOnly(['alias', 'resultCurrency', 'currencyRates', 'updatedAt'])
+            .hasOnly([
+              'alias',
+              'currencyRates',
+              'resultCurrency',
+              'updatedAt'
+            ])
           && validAlias(request.resource.data.alias)
           && validUserCurrencySettings(request.resource.data));
-      allow delete: if admin() && request.auth.uid != userId;
+      allow delete: if admin()
+        && request.auth.uid != userId
+        && resource.data.role == 'user'
+        && (
+          resource.data.status == 'pending'
+          || resource.data.status == 'rejected'
+        );
+    }
+    match /userAuth/{userId} {
+      allow get: if (signedIn() && request.auth.uid == userId)
+        || admin();
+      allow list: if admin();
+      allow create, update: if signedIn()
+        && request.auth.uid == userId
+        && googleIdentity()
+        && request.resource.data.keys().hasOnly([
+          'provider'
+        ])
+        && request.resource.data.provider == 'google.com';
+      allow delete: if false;
     }
     match /settings/{settingId} {
       allow get: if signedIn();
@@ -195,8 +350,8 @@ service cloud.firestore {
           + '_'
           + request.resource.data.debtorId
         && ledgerManagedAfter(request.resource.data.ledgerId)
-        && activeUser(request.resource.data.debtorId)
-        && activeUser(
+        && selectableLedgerUser(request.resource.data.debtorId)
+        && selectableLedgerUser(
           getAfter(
             /databases/$(database)/documents/ledger/$(request.resource.data.ledgerId)
           ).data.creditorId
