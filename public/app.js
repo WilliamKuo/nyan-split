@@ -110,6 +110,7 @@ let pendingLedgerImageFocus = null;
 let seedingCurrencyRates = false;
 let initialCurrencyRatesSeeded = false;
 let appVersion = '';
+let showHelpGuide = false;
 
 let stopProfile;
 let stopSettings;
@@ -2052,6 +2053,103 @@ function renderAdminLedgerData() {
     </section>`;
 }
 
+function renderHelpGuideModal() {
+  if (!showHelpGuide) return '';
+
+  return `<div class="modal-overlay" data-action="close-help-guide" role="dialog" aria-modal="true" aria-labelledby="help-guide-heading">
+    <div class="modal-card help-guide-modal" onclick="event.stopPropagation()">
+      <div class="modal-header">
+        <div class="modal-header-title">
+          <span class="help-modal-icon">❓</span>
+          <div>
+            <h3 id="help-guide-heading">${escapeHtml(t('helpGuideTitle'))}</h3>
+            <p class="modal-subtitle">${escapeHtml(t('helpGuideSubtitle'))}</p>
+          </div>
+        </div>
+        <button type="button" class="modal-close-button" data-action="close-help-guide" aria-label="${escapeHtml(t('helpGuideClose'))}">&times;</button>
+      </div>
+
+      <div class="modal-body help-guide-content">
+        <section class="help-guide-section">
+          <h4>📌 ${escapeHtml(t('helpSectionNavigation'))}</h4>
+          <ul class="help-guide-list">
+            <li>
+              <span class="help-badge badge-click">${escapeHtml(t('badgeClick'))}</span>
+              <span>${escapeHtml(t('helpNavClickItem'))}</span>
+            </li>
+            <li>
+              <span class="help-badge badge-click">${escapeHtml(t('badgeClick'))}</span>
+              <span>${escapeHtml(t('helpNavHelpIcon'))}</span>
+            </li>
+            <li>
+              <span class="help-badge badge-click">${escapeHtml(t('badgeClick'))}</span>
+              <span>${escapeHtml(t('helpNavThemeLang'))}</span>
+            </li>
+          </ul>
+        </section>
+
+        <section class="help-guide-section">
+          <h4>⌨️ ${escapeHtml(t('helpSectionInput'))}</h4>
+          <ul class="help-guide-list">
+            <li>
+              <span class="help-badge badge-keyin">${escapeHtml(t('badgeKeyin'))}</span>
+              <span>${escapeHtml(t('helpInputTypeFields'))}</span>
+            </li>
+            <li>
+              <span class="help-badge badge-shortcut">${escapeHtml(t('badgeShortcut'))}</span>
+              <span>${escapeHtml(t('helpInputSubmitKey'))}</span>
+            </li>
+            <li>
+              <span class="help-badge badge-shortcut">${escapeHtml(t('badgeShortcut'))}</span>
+              <span>${escapeHtml(t('helpInputEscapeKey'))}</span>
+            </li>
+            <li>
+              <span class="help-badge badge-keyin">${escapeHtml(t('badgeKeyin'))}</span>
+              <span>${escapeHtml(t('helpInputSearchFilter'))}</span>
+            </li>
+          </ul>
+        </section>
+
+        <section class="help-guide-section">
+          <h4>📖 ${escapeHtml(t('helpSectionLedger'))}</h4>
+          <ul class="help-guide-list">
+            <li>
+              <span class="help-badge badge-click">${escapeHtml(t('badgeClick'))}</span>
+              <span>${escapeHtml(t('helpLedgerAddExpense'))}</span>
+            </li>
+            <li>
+              <span class="help-badge badge-click">${escapeHtml(t('badgeClick'))}</span>
+              <span>${escapeHtml(t('helpLedgerReceipts'))}</span>
+            </li>
+            <li>
+              <span class="help-badge badge-click">${escapeHtml(t('badgeClick'))}</span>
+              <span>${escapeHtml(t('helpLedgerClearRestore'))}</span>
+            </li>
+          </ul>
+        </section>
+
+        <section class="help-guide-section">
+          <h4>💱 ${escapeHtml(t('helpSectionSettlement'))}</h4>
+          <ul class="help-guide-list">
+            <li>
+              <span class="help-badge badge-auto">${escapeHtml(t('badgeAuto'))}</span>
+              <span>${escapeHtml(t('helpSettlementCalculate'))}</span>
+            </li>
+            <li>
+              <span class="help-badge badge-keyin">${escapeHtml(t('badgeKeyin'))}</span>
+              <span>${escapeHtml(t('helpSettlementCurrency'))}</span>
+            </li>
+          </ul>
+        </section>
+      </div>
+
+      <div class="modal-footer">
+        <button type="button" class="primary-button" data-action="close-help-guide">${escapeHtml(t('helpGuideClose'))}</button>
+      </div>
+    </div>
+  </div>`;
+}
+
 function renderApplication() {
   const content = selectedLedgerImageEntryId
     ? renderLedgerImageViewer()
@@ -2082,8 +2180,10 @@ function renderApplication() {
       ${appVersion ? `<p class="app-version">${escapeHtml(appVersion)}</p>` : ''}
     </nav>
     <section class="content-panel">
+      <button class="help-guide-button" type="button" data-action="toggle-help-guide" title="${escapeHtml(t('helpGuideTitle'))}" aria-label="${escapeHtml(t('helpGuideTitle'))}">?</button>
       ${notice ? `<p class="notice notice-${noticeType}" role="${noticeType === 'error' ? 'alert' : 'status'}">${escapeHtml(notice)}</p>` : ''}
       ${content}
+      ${renderHelpGuideModal()}
     </section>
   </main>`;
   bind();
@@ -2417,6 +2517,32 @@ function bind() {
     button.title = ledgerCollapsed ? t('showLedger') : t('hideLedger');
     button.textContent = ledgerCollapsed ? '▶' : '▼';
   });
+  document.querySelectorAll('[data-action="toggle-help-guide"]').forEach((button) => {
+    button.onclick = () => {
+      showHelpGuide = !showHelpGuide;
+      render();
+    };
+  });
+  document.querySelectorAll('[data-action="close-help-guide"]').forEach((element) => {
+    element.onclick = (event) => {
+      if (event.target === element || element.tagName === 'BUTTON') {
+        showHelpGuide = false;
+        render();
+      }
+    };
+  });
+  document.onkeydown = (event) => {
+    if (event.key === 'Escape') {
+      if (showHelpGuide) {
+        showHelpGuide = false;
+        render();
+      } else if (selectedLedgerImageEntryId) {
+        selectedLedgerImageEntryId = '';
+        selectedLedgerImageIndex = 0;
+        render();
+      }
+    }
+  };
 }
 
 async function renderShareQr() {
