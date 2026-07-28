@@ -15,13 +15,38 @@ A Firebase-based shared accounting ledger with administrator approval.
 - **Offline-capable shell** – App opens offline, but requires connection for data
 - **Bilingual interface** – Switch between English and 中文
 
-## Run locally
+## Deployment
 
-1. The app is configured for the `nyan-split` Firebase project. Enable Google and Anonymous Authentication, plus Firestore, there.
-2. To preview it locally, run a static server from `public/` (for example, `python3 -m http.server --directory public`).
-3. Deploy the app and rules with `firebase deploy`.
-
-On first sign-in, a user can keep or change their Google display name as an alias. The account is then created as `pending`. In Firestore, manually set one trusted account's `role` to `admin` and `status` to `active`; that account can approve or reject future registrations from the app.
+1. **Firebase Console Setup**: Create a Firebase project, enable **Google** and **Anonymous** sign-in providers under Authentication (add your host domain to Authorized Domains), and create a **Firestore Database**.
+2. **Update Configuration**:
+   - Edit `public/firebase-config.js` and replace with your Firebase Web App credentials:
+     ```javascript
+     export const firebaseConfig = {
+       apiKey: 'YOUR_API_KEY',
+       authDomain: 'YOUR_PROJECT_ID.firebaseapp.com',
+       projectId: 'YOUR_PROJECT_ID',
+       storageBucket: 'YOUR_PROJECT_ID.firebasestorage.app',
+       messagingSenderId: 'YOUR_MESSAGING_SENDER_ID',
+       appId: 'YOUR_APP_ID',
+     };
+     ```
+   - Edit `.firebaserc` and set your Firebase project ID:
+     ```json
+     {
+       "projects": {
+         "default": "YOUR_PROJECT_ID"
+       }
+     }
+     ```
+3. **Deploy App & Security Rules**:
+   ```bash
+   firebase login
+   firebase use YOUR_PROJECT_ID
+   firebase deploy
+   ```
+4. **Bootstrap Initial Admin**:
+   - Sign in to the deployed app (your account will be created as `pending`).
+   - In Firebase Console > Firestore (`users` collection), find your UID and update `role: "admin"` and `status: "active"`.
 
 ## Security model
 
