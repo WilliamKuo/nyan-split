@@ -595,8 +595,79 @@ input[readonly] {
   line-height: 1.45;
 }
 
-.ledger-filter {
+.ledger-filter-row {
+  display: flex;
+  align-items: flex-start;
+  gap: .65rem;
   margin-bottom: 1rem;
+}
+
+.ledger-filter {
+  position: relative;
+  flex: 1 1 0;
+  margin-bottom: 0;
+}
+
+.ledger-filter input {
+  padding-right: 2.4rem;
+}
+
+.ledger-filter-clear {
+  position: absolute;
+  top: 50%;
+  right: .35rem;
+  transform: translateY(-50%);
+  display: grid;
+  place-items: center;
+  width: 2rem;
+  height: 2rem;
+  min-height: auto;
+  padding: 0;
+  color: var(--muted);
+  font-size: 1.15rem;
+  font-weight: 400;
+  line-height: 1;
+  background: transparent;
+  border: 0;
+  border-radius: .4rem;
+  cursor: pointer;
+}
+
+.ledger-filter-clear:hover {
+  color: var(--text);
+  background: rgb(155 135 245 / 14%);
+}
+
+.ledger-filter-clear.hidden {
+  display: none;
+}
+
+.ledger-collapse-toggle {
+  flex: 0 0 auto;
+  align-self: center;
+  display: grid;
+  place-items: center;
+  width: 2rem;
+  height: 2rem;
+  min-height: auto;
+  padding: 0;
+  color: var(--muted);
+  font-size: .7rem;
+  line-height: 1;
+  background: transparent;
+  border: 0;
+  border-radius: .4rem;
+  cursor: pointer;
+  transition: color .15s, background .15s;
+}
+
+.ledger-collapse-toggle:hover {
+  color: var(--text);
+  background: rgb(155 135 245 / 14%);
+}
+
+.ledger-list.ledger-list-collapsed {
+  display: none;
 }
 
 .ledger-edit-form {

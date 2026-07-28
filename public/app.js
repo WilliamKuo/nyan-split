@@ -87,6 +87,7 @@ let ledgerSplits = [];
 let ledgerEntriesReady = false;
 let ledgerSplitsReady = false;
 let ledgerFilter = '';
+let ledgerCollapsed = localStorage.getItem('nyan-split-ledger-collapsed') === 'true';
 let ledgerImages = new Map();
 let selectableUsers = [];
 let knownUsers = [];
@@ -1807,6 +1808,9 @@ function renderLedger() {
   const myBalance = dataReady
     ? calculateBalances().get(profile.uid) || 0
     : 0;
+  const hasFilter = ledgerFilter.length > 0;
+  const clearFilterButton = `<button class="ledger-filter-clear${hasFilter ? '' : ' hidden'}" type="button" data-action="clear-ledger-filter" aria-label="${escapeHtml(t('clearFilter'))}" title="${escapeHtml(t('clearFilter'))}">&times;</button>`;
+  const toggleIcon = ledgerCollapsed ? '▶' : '▼';
 
   return `<section class="page-content">
     <div class="page-heading">
@@ -1819,11 +1823,15 @@ function renderLedger() {
 
     <section class="accounting-card ledger-card">
       <div class="card-heading"><div><h3>${escapeHtml(t('ledger'))}</h3><p>${escapeHtml(t('ledgerHelp'))}</p></div></div>
-      <label class="field ledger-filter">
-        <span class="sr-only">${escapeHtml(t('ledgerSearch'))}</span>
-        <input id="ledger-filter" type="search" value="${escapeHtml(ledgerFilter)}" placeholder="${escapeHtml(t('ledgerSearchPlaceholder'))}" aria-label="${escapeHtml(t('ledgerSearch'))}" autocomplete="off" />
-      </label>
-      <div id="ledger-rows" class="ledger-list">${renderLedgerRows(filteredLedgerEntries())}</div>
+      <div class="ledger-filter-row">
+        <label class="field ledger-filter">
+          <span class="sr-only">${escapeHtml(t('ledgerSearch'))}</span>
+          <input id="ledger-filter" type="search" value="${escapeHtml(ledgerFilter)}" placeholder="${escapeHtml(t('ledgerSearchPlaceholder'))}" aria-label="${escapeHtml(t('ledgerSearch'))}" autocomplete="off" />
+          ${clearFilterButton}
+        </label>
+        <button class="ledger-collapse-toggle" type="button" data-action="toggle-ledger-collapse" aria-expanded="${!ledgerCollapsed}" aria-controls="ledger-rows" title="${escapeHtml(ledgerCollapsed ? t('showLedger') : t('hideLedger'))}">${toggleIcon}</button>
+      </div>
+      <div id="ledger-rows" class="ledger-list${ledgerCollapsed ? ' ledger-list-collapsed' : ''}">${renderLedgerRows(filteredLedgerEntries())}</div>
     </section>
 
     ${dataReady ? renderSettlementSummary(myBalance) : ''}
@@ -2120,14 +2128,23 @@ function render() {
 
 function bindLedgerFilter() {
   const filterInput = document.querySelector('#ledger-filter');
+  const clearBtn = document.querySelector('[data-action="clear-ledger-filter"]');
   if (!filterInput) return;
+
+  const updateClearVisibility = () => {
+    if (clearBtn) {
+      clearBtn.classList.toggle('hidden', filterInput.value.length === 0);
+    }
+  };
 
   filterInput.addEventListener('input', (event) => {
     ledgerFilter = event.currentTarget.value;
+    updateClearVisibility();
     if (!event.isComposing) refreshLedgerRows();
   });
   filterInput.addEventListener('compositionend', (event) => {
     ledgerFilter = event.currentTarget.value;
+    updateClearVisibility();
     refreshLedgerRows();
   });
 }
@@ -2382,6 +2399,24 @@ function bind() {
     'click',
     calculateSuggestedTransfers,
   );
+  document.querySelector('[data-action="clear-ledger-filter"]')?.addEventListener('click', () => {
+    ledgerFilter = '';
+    const filterInput = document.querySelector('#ledger-filter');
+    if (filterInput) filterInput.value = '';
+    const clearBtn = document.querySelector('[data-action="clear-ledger-filter"]');
+    if (clearBtn) clearBtn.classList.add('hidden');
+    refreshLedgerRows();
+  });
+  document.querySelector('[data-action="toggle-ledger-collapse"]')?.addEventListener('click', (event) => {
+    ledgerCollapsed = !ledgerCollapsed;
+    localStorage.setItem('nyan-split-ledger-collapsed', ledgerCollapsed);
+    const button = event.currentTarget;
+    const rows = document.querySelector('#ledger-rows');
+    if (rows) rows.classList.toggle('ledger-list-collapsed', ledgerCollapsed);
+    button.setAttribute('aria-expanded', String(!ledgerCollapsed));
+    button.title = ledgerCollapsed ? t('showLedger') : t('hideLedger');
+    button.textContent = ledgerCollapsed ? '▶' : '▼';
+  });
 }
 
 async function renderShareQr() {
