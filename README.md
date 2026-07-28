@@ -4,11 +4,11 @@ A Firebase-based shared accounting ledger with administrator approval.
 
 ## Features
 
-- **Multi-user shared ledger** – Track direct debts between users
+- **Grouped shared expenses** – Track several users owing one payer under a shared note, currency, and receipt
 - **Admin approval workflow** – New registrations require administrator approval
 - **Multi-currency support** – Admins manage allowed currencies; users set personal conversion rates
-- **Receipt attachments** – Add photos or receipts to ledger entries (compressed to JPEG)
-- **Entry clearing** – Mark entries as cleared to exclude them from balance calculations
+- **Receipt attachments** – Add shared photos or receipts to an expense (compressed to JPEG)
+- **Flexible debt clearing** – Clear one debt or every debt in an expense to exclude them from balance calculations
 - **Net balance calculation** – See your personal balance across all currencies
 - **Optimized settlement plan** – Minimizes the number of transfers needed
 - **PWA installable** – Add to home screen on supported devices
@@ -50,15 +50,64 @@ A Firebase-based shared accounting ledger with administrator approval.
 
 ## Security model
 
-Only active accounts can access the shared ledger. Each ledger entry records a direct debt: one user owes another user an amount. The result card shows only the signed-in user's net balance. User approval, rejection, profile removal, and currency-allowlist changes are restricted to administrators by `firestore.rules`. Deploy those rules before treating the app as usable.
+Only active accounts can access the shared ledger. Each ledger entry represents one expense with a shared payer, note, currency, and set of images. Its `ledgerSplits` documents record the individual users and amounts owed to that payer. Each debt can be cleared independently, while the expense controls can clear, restore, or remove all of its debts together. The result card shows only the signed-in user's net balance. User approval, rejection, profile removal, and currency-allowlist changes are restricted to administrators by `firestore.rules`. Deploy those rules before treating the app as usable.
 
 Anonymous sign-ins follow the same registration and approval flow as Google sign-ins. Removing an active user marks their Firestore profile as `removed`, clears their email, photo, and custom rates, revokes app access, and retains their alias for ledger history. Removing a pending or rejected registration deletes its Firestore profile. Neither operation deletes the Firebase Authentication account; that requires a trusted backend using the Firebase Admin SDK.
 
-## Languages
+## Ledger and currency behavior
 
-New or unconfigured apps allow only TWD, which is also the default currency. In the Settings Currencies tab, an administrator can add currencies such as JPY or USD, remove them, and choose the default. Each ledger row can use any allowed currency, initially selecting the administrator's default. At the bottom of Ledger, each user can save a result currency and optional personal conversion-rate overrides expressed in that result currency. Blank rate fields use the public ExchangeRate API rate. Currency codes use three uppercase ISO letters. Ledger rows store only their original amount and currency; every user's balances and suggested transfers are calculated using that user's current saved rate settings.
+New or unconfigured apps allow only TWD, which is also the default currency. In the Settings Currencies tab, an administrator can add currencies such as JPY or USD, remove them, and choose the default. Each expense uses one allowed currency shared by all of its debts, initially selecting the administrator's default. At the bottom of Ledger, each user can save a result currency and optional personal conversion-rate overrides expressed in that result currency. Blank rate fields use the public ExchangeRate API rate. Currency codes use three uppercase ISO letters. Expenses and debts retain their original currency and amounts; every user's balances and suggested transfers are calculated using that user's current saved rate settings.
 
-The ledger shows every active user's net balance and a settlement plan that minimizes the number of transfers. Mixed-currency rows are converted using the signed-in user's saved result currency and rate settings.
+The ledger shows every active user's net balance and a settlement plan that minimizes the number of transfers. Only uncleared debts contribute to balances. Mixed-currency expenses are converted using the signed-in user's saved result currency and rate settings.
+
+## Firestore data model
+
+An expense stores its shared fields in `ledger/{entryId}`:
+
+```javascript
+{
+  creditorId: 'payer-user-id',
+  createdAt: timestamp,
+  createdBy: 'creator-user-id',
+  currency: 'TWD',
+  note: 'Restaurant dinner',
+  updatedAt: timestamp,
+}
+```
+
+Each amount owed is stored separately in `ledgerSplits/{splitId}`:
+
+```javascript
+{
+  amount: 100,
+  cleared: false,
+  createdAt: timestamp,
+  debtorId: 'owing-user-id',
+  ledgerId: 'expense-id',
+  position: 0,
+  updatedAt: timestamp,
+}
+```
+
+Split document IDs combine the expense and owing-user IDs, so an owing user appears at most once in an expense. `position` preserves the display order. The interface limits an expense to 12 debts.
+
+Attachments remain separate and point to the shared expense:
+
+```javascript
+// ledgerImages/{imageId}
+{
+  createdAt: timestamp,
+  createdBy: 'creator-user-id',
+  dataUrl: 'data:image/jpeg;base64,...',
+  ledgerId: 'expense-id',
+}
+```
+
+Every debt in the expense therefore shares the same attachments.
+
+Creating or saving an expense writes its header and debts together. Removing the whole expense also removes its debt and image documents. Removing the final debt from the editor is therefore treated as removing the complete expense.
+
+## Installation and languages
 
 The Share & install page provides a copyable site URL and QR code. NyanSplit includes a web manifest and service worker, so supported browsers can install it as a PWA. The app shell can open offline, but Google sign-in and Firebase data still need a connection.
 

@@ -251,7 +251,6 @@ input[readonly] {
   display: grid;
   grid-template-columns:
     minmax(0, 1fr)
-    auto
     minmax(0, 1fr)
     minmax(4.25rem, .75fr)
     minmax(4rem, .65fr);
@@ -268,6 +267,19 @@ input[readonly] {
   position: relative;
   width: 44px;
   padding: .6rem;
+}
+
+.entry-camera-field {
+  display: grid;
+  justify-items: center;
+  gap: .38rem;
+  color: var(--violet-light);
+  font-size: .79rem;
+  font-weight: 750;
+}
+
+.entry-camera-caption {
+  display: none;
 }
 
 .entry-image-count {
@@ -587,12 +599,8 @@ input[readonly] {
   margin-bottom: 1rem;
 }
 
-.ledger-creator-mobile {
-  display: none;
-}
-
 .ledger-edit-form {
-  width: min(100%, 34rem);
+  width: 100%;
   margin: 0;
 }
 
@@ -749,36 +757,6 @@ input[readonly] {
 .settlement-row strong {
   flex: 0 0 auto;
   white-space: nowrap;
-}
-
-.debt-connector {
-  display: grid;
-  align-self: end;
-  min-height: 0;
-  padding: .6rem 0;
-  color: var(--cyan);
-  place-items: center;
-  font-size: 1rem;
-  font-weight: 900;
-  line-height: 1;
-  white-space: nowrap;
-}
-
-.debt-connector-inline {
-  display: block;
-  text-align: center;
-  padding: .5rem 0;
-  color: var(--cyan);
-  font-size: 1rem;
-  font-weight: 900;
-  line-height: 1;
-}
-
-.debt-table-connector {
-  width: 1%;
-  color: var(--cyan);
-  font-weight: 850;
-  text-align: center;
 }
 
 .field-wide {
@@ -967,37 +945,6 @@ table {
   min-width: 0;
 }
 
-.ledger-table {
-  min-width: 42rem;
-  table-layout: auto;
-}
-
-.ledger-mobile-summary-column,
-.ledger-mobile-summary {
-  display: none;
-}
-
-.ledger-user-column {
-  width: 10ch;
-}
-
-.ledger-debt-column {
-  width: 8ch;
-}
-
-.ledger-amount-column {
-  width: 12ch;
-}
-
-.ledger-image-column,
-.ledger-image-cell {
-  width: 3.5rem;
-}
-
-.ledger-user-cell {
-  white-space: nowrap;
-}
-
 th,
 td {
   padding: .75rem .8rem;
@@ -1023,14 +970,84 @@ tbody tr:last-child td {
   text-align: center;
 }
 
-.entry-actions,
 .user-actions {
   width: 1%;
   white-space: nowrap;
 }
 
+.ledger-list {
+  display: grid;
+  gap: .75rem;
+}
+
+.ledger-empty {
+  margin: 0;
+  padding: 1.5rem;
+  color: var(--muted);
+  text-align: center;
+  background: rgb(155 135 245 / 7%);
+  border: 1px solid var(--line);
+  border-radius: .85rem;
+}
+
+.ledger-group {
+  min-width: 0;
+  overflow: hidden;
+  background: var(--surface-raised);
+  border: 1px solid var(--line);
+  border-radius: .9rem;
+}
+
+.ledger-group-partial {
+  border-color: rgb(249 199 107 / 42%);
+}
+
+.ledger-group-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: .75rem;
+  padding: .8rem .9rem;
+  background: rgb(155 135 245 / 8%);
+  border-bottom: 1px solid var(--line);
+}
+
+.ledger-group-title {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: .45rem;
+}
+
+.ledger-group-note {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: .92rem;
+  line-height: 1.4;
+}
+
+.ledger-group-status {
+  display: inline-flex;
+  flex: 0 0 auto;
+  padding: .2rem .45rem;
+  color: var(--gold);
+  background: rgb(249 199 107 / 12%);
+  border-radius: 999px;
+  font-size: .69rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.ledger-group-cleared .ledger-group-status {
+  color: var(--violet-light);
+  background: rgb(155 135 245 / 14%);
+}
+
 .ledger-image-cell {
-  padding: .4rem;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
 }
 
 .ledger-image-button {
@@ -1040,9 +1057,272 @@ tbody tr:last-child td {
   white-space: nowrap;
 }
 
-.ledger-row-editing td {
-  padding: .85rem;
-  background: var(--surface-raised);
+.ledger-split-list {
+  display: grid;
+}
+
+.ledger-split-list > .muted {
+  margin: 0;
+  padding: .8rem .9rem;
+}
+
+.ledger-split-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: .75rem;
+  padding: .7rem .9rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.ledger-split-row:last-child {
+  border-bottom: 0;
+}
+
+.ledger-split-people {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: .3rem;
+  overflow-wrap: anywhere;
+  line-height: 1.45;
+}
+
+.ledger-split-people strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.ledger-split-people > span {
+  color: var(--cyan);
+  font-weight: 850;
+}
+
+.ledger-split-amount {
+  color: var(--cyan);
+  font-size: .95rem;
+  white-space: nowrap;
+}
+
+.ledger-split-row.ledger-split-cleared {
+  opacity: .58;
+}
+
+.ledger-split-row.ledger-split-cleared .ledger-split-amount {
+  text-decoration: line-through;
+}
+
+.ledger-group-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: .6rem;
+  padding: .65rem .9rem;
+  background: rgb(155 135 245 / 5%);
+  border-top: 1px solid var(--line);
+}
+
+.ledger-group-creator {
+  min-width: 0;
+  color: var(--muted);
+  font-size: .75rem;
+  overflow-wrap: anywhere;
+}
+
+.ledger-group-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: .4rem;
+}
+
+.ledger-group-editing {
+  padding: .9rem;
+}
+
+.entry-shared-fields,
+.ledger-edit-shared-fields {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(8rem, .45fr);
+  gap: .75rem;
+}
+
+.entry-shared-fields > *,
+.ledger-edit-shared-fields > *,
+.entry-split-row > *,
+.ledger-split-edit-row > * {
+  min-width: 0;
+}
+
+.entry-debts,
+.ledger-edit-debts {
+  display: grid;
+  gap: .75rem;
+  padding: .8rem;
+  background: rgb(155 135 245 / 5%);
+  border: 1px solid var(--line);
+  border-radius: .8rem;
+}
+
+.entry-debts > .card-heading,
+.ledger-edit-debts > .card-heading {
+  align-items: center;
+  margin-bottom: 0;
+}
+
+.entry-debts h4,
+.ledger-edit-debts h4 {
+  margin: 0;
+  color: var(--violet-light);
+  font-size: .86rem;
+}
+
+.entry-debts button[disabled],
+.ledger-edit-debts button[disabled] {
+  opacity: .48;
+  cursor: not-allowed;
+}
+
+.entry-split-list,
+.ledger-split-edit-list {
+  display: grid;
+  gap: .65rem;
+}
+
+.entry-split-list > .muted,
+.ledger-split-edit-list > .muted {
+  margin: 0;
+}
+
+.entry-split-row,
+.ledger-split-edit-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(6.5rem, .55fr);
+  align-items: center;
+  gap: .6rem;
+  padding: .7rem;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: .7rem;
+}
+
+.entry-split-party,
+.entry-split-money {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: .3rem;
+}
+
+.entry-split-party {
+  flex-wrap: wrap;
+}
+
+.entry-split-party > .field,
+.entry-split-money > .field {
+  min-width: 0;
+  flex: 1 1 5rem;
+}
+
+.entry-split-party > *,
+.entry-split-money > * {
+  min-width: 0;
+}
+
+.ledger-split-field-context {
+  display: inline-flex;
+  flex: 0 1 auto;
+  align-items: baseline;
+  gap: .25rem;
+  margin: 0;
+  color: var(--muted);
+  font-size: .8rem;
+  font-weight: 700;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.ledger-split-field-context strong {
+  color: var(--cyan);
+}
+
+.ledger-split-field-context output,
+output.ledger-split-field-context {
+  color: var(--cyan);
+}
+
+output.ledger-split-field-context {
+  white-space: nowrap;
+}
+
+.entry-split-party .ledger-split-field-context output {
+  color: var(--text);
+  font-weight: 800;
+}
+
+.entry-split-party .ledger-split-field-context > span {
+  color: var(--cyan);
+  font-weight: 850;
+}
+
+.entry-split-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.entry-split-party select,
+.entry-split-money input {
+  width: 100%;
+  min-width: 0;
+  padding-inline: .4rem;
+}
+
+.entry-split-row.ledger-split-cleared,
+.ledger-split-edit-row.ledger-split-cleared {
+  border-color: rgb(155 135 245 / 34%);
+}
+
+.entry-split-row.ledger-split-cleared > .field,
+.ledger-split-edit-row.ledger-split-cleared > .field {
+  opacity: .62;
+}
+
+.entry-split-row.ledger-split-cleared .entry-split-party,
+.entry-split-row.ledger-split-cleared .entry-split-money,
+.ledger-split-edit-row.ledger-split-cleared .entry-split-party,
+.ledger-split-edit-row.ledger-split-cleared .entry-split-money {
+  opacity: .62;
+}
+
+.entry-split-actions,
+.ledger-split-edit-actions {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: repeat(auto-fit, minmax(7rem, 1fr));
+  gap: .4rem;
+}
+
+.entry-split-actions button,
+.ledger-split-edit-actions button {
+  width: 100%;
+  min-height: 44px;
+  padding: .55rem .65rem;
+  font-size: .76rem;
+  white-space: normal;
+}
+
+.entry-details-row.new-entry-layout {
+  grid-template-columns: minmax(0, 1fr);
+  align-items: stretch;
 }
 
 .ledger-edit-actions {
@@ -1055,16 +1335,6 @@ tbody tr:last-child td {
   min-height: 44px;
 }
 
-.ledger-row-cleared {
-  opacity: .58;
-}
-
-.entry-action-list {
-  display: flex;
-  align-items: center;
-  gap: .4rem;
-}
-
 .clear-entry-button {
   min-height: 2rem;
   padding: .35rem .55rem;
@@ -1072,6 +1342,12 @@ tbody tr:last-child td {
   background: rgb(155 135 245 / 12%);
   border-color: rgb(155 135 245 / 28%);
   font-size: .73rem;
+}
+
+.clear-entry-button.danger {
+  color: var(--rose);
+  background: rgb(255 143 171 / 10%);
+  border-color: rgb(255 143 171 / 28%);
 }
 
 .ledger-image-view {
@@ -1334,6 +1610,11 @@ html[data-theme="light"] .app-nav {
   .ledger-card > .card-heading {
     display: none;
   }
+
+  .entry-shared-fields,
+  .ledger-edit-shared-fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 @media (max-width: 500px) {
@@ -1349,14 +1630,26 @@ html[data-theme="light"] .app-nav {
     gap: .5rem;
   }
 
+  .entry-camera-field,
+  .entry-camera-button {
+    width: auto;
+    min-width: 44px;
+    gap: .35rem;
+  }
+
+  .entry-camera-caption {
+    display: inline;
+  }
+
+  .entry-shared-fields,
+  .ledger-edit-shared-fields {
+    grid-template-columns: minmax(0, 1fr) minmax(5.5rem, .55fr);
+    gap: .5rem;
+  }
+
   .entry-details-row {
-    grid-template-columns:
-      minmax(0, 1fr)
-      auto
-      minmax(0, 1fr)
-      minmax(4rem, .75fr)
-      minmax(3.75rem, .65fr);
-    gap: .4rem;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: .6rem;
   }
 
   .entry-details-row input,
@@ -1366,12 +1659,6 @@ html[data-theme="light"] .app-nav {
 
   .entry-details-row .field {
     font-size: .72rem;
-  }
-
-  .debt-connector-inline {
-    align-self: end;
-    padding: .75rem 0;
-    font-size: .78rem;
   }
 
   .auth-card {
@@ -1418,53 +1705,75 @@ html[data-theme="light"] .app-nav {
     width: 100%;
   }
 
-  /* -- Card-based ledger entries for mobile -- */
+  /* -- Grouped ledger expenses for mobile -- */
   .table-wrap {
     border: 0;
     border-radius: 0;
     overflow: visible;
   }
 
-  .ledger-table {
-    display: block;
-    min-width: 0;
-  }
-
-  .ledger-table thead {
-    display: none;
-  }
-
-  .ledger-table tbody {
-    display: grid;
+  .ledger-list {
     gap: .6rem;
   }
 
-  .ledger-table tbody tr {
+  .ledger-group-header,
+  .ledger-split-row,
+  .ledger-group-footer {
+    padding-right: .75rem;
+    padding-left: .75rem;
+  }
+
+  .ledger-split-row {
+    gap: .5rem;
+  }
+
+  .ledger-split-people {
+    font-size: .84rem;
+  }
+
+  .ledger-split-amount {
+    font-size: .9rem;
+  }
+
+  .ledger-group-creator {
+    width: 100%;
+  }
+
+  .ledger-group-actions {
     display: grid;
-    grid-template-columns:
-      minmax(0, 1fr)
-      auto
-      auto;
-    grid-template-areas:
-      "note    note    image"
-      "people  amount  currency"
-      "creator creator creator"
-      "actions actions actions";
-    gap: .35rem .6rem;
-    padding: .75rem .85rem;
-    background: var(--surface-raised);
-    border: 1px solid var(--line);
-    border-radius: .85rem;
+    grid-template-columns: repeat(auto-fit, minmax(7rem, 1fr));
+    width: 100%;
   }
 
-  .ledger-table tbody tr.ledger-row-editing {
-    display: block;
-    grid-template-areas: none;
-    grid-template-columns: none;
+  .ledger-group-actions button {
+    width: 100%;
+    min-height: 44px;
   }
 
-  .ledger-table tbody tr.ledger-row-editing td {
-    display: block;
+  .ledger-image-button {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  .ledger-group-editing {
+    padding: .75rem;
+  }
+
+  .entry-debts,
+  .ledger-edit-debts {
+    padding: .65rem;
+  }
+
+  .entry-debts > .card-heading,
+  .ledger-edit-debts > .card-heading {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+  }
+
+  .entry-debts > .card-heading > button,
+  .ledger-edit-debts > .card-heading > button {
+    min-height: 44px;
   }
 
   .ledger-edit-actions {
@@ -1473,98 +1782,6 @@ html[data-theme="light"] .app-nav {
 
   .ledger-edit-actions button {
     width: 100%;
-  }
-
-  .ledger-table tbody tr td {
-    padding: 0;
-    border: 0;
-  }
-
-  /* Mobile summary cell */
-  .ledger-table tbody tr td.ledger-mobile-summary {
-    grid-area: people;
-    display: block;
-    overflow: visible;
-    white-space: normal;
-    font-weight: 700;
-  }
-
-  /* Debtor cell */
-  .ledger-table tbody tr td.ledger-user-cell:nth-child(2) {
-    display: none;
-  }
-
-  /* Debt connector cell (→) */
-  .ledger-table tbody tr td.debt-table-connector {
-    display: none;
-  }
-
-  /* Creditor cell */
-  .ledger-table tbody tr td.ledger-user-cell:nth-child(4) {
-    display: none;
-  }
-
-  /* Amount cell */
-  .ledger-table tbody tr td:nth-child(5) {
-    grid-area: amount;
-    font-size: 1.05rem;
-    font-weight: 800;
-    color: var(--cyan);
-  }
-
-  /* Currency cell */
-  .ledger-table tbody tr td:nth-child(6) {
-    grid-area: currency;
-    align-self: center;
-    justify-self: end;
-    color: var(--violet-light);
-    font-size: .82rem;
-    font-weight: 700;
-  }
-
-  /* Note cell */
-  .ledger-table tbody tr td:nth-child(7) {
-    grid-area: note;
-    color: var(--muted);
-    font-size: .82rem;
-  }
-
-  /* Image cell */
-  .ledger-table tbody tr td.ledger-image-cell {
-    grid-area: image;
-    width: auto;
-    justify-self: end;
-  }
-
-  /* Creator cell */
-  .ledger-table tbody tr td.ledger-creator-cell {
-    grid-area: creator;
-    overflow: visible;
-    color: var(--muted);
-    font-size: .75rem;
-    white-space: normal;
-  }
-
-  .ledger-creator-desktop {
-    display: none;
-  }
-
-  .ledger-creator-mobile {
-    display: inline;
-  }
-
-  /* Actions cell */
-  .ledger-table tbody tr td.entry-actions {
-    grid-area: actions;
-    width: auto;
-    white-space: normal;
-    padding-top: .25rem;
-    border-top: 1px solid var(--line);
-  }
-
-  .ledger-table .empty-cell {
-    grid-column: 1 / -1;
-    padding: 1.5rem;
   }
 
   /* -- Card-based admin users for mobile -- */

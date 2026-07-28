@@ -40,6 +40,7 @@ const IMAGE_MAX_DIMENSION = 1600;
 const IMAGE_MIN_DIMENSION = 480;
 const IMAGE_MAX_BYTES = 500 * 1024;
 const BATCH_DELETE_LIMIT = 400;
+const MAX_LEDGER_SPLITS = 12;
 const NEW_LEDGER_ENTRY_IMAGE_KEY = 'new-entry';
 const JPEG_QUALITIES = [
   .78,
@@ -81,6 +82,9 @@ let profile = null;
 let settings = defaultSettings();
 let adminCurrencySettings = null;
 let ledgerEntries = [];
+let ledgerSplits = [];
+let ledgerEntriesReady = false;
+let ledgerSplitsReady = false;
 let ledgerFilter = '';
 let ledgerImages = new Map();
 let activeUsers = [];
@@ -95,6 +99,9 @@ let pendingCurrencyRateDraft = null;
 let selectedLedgerImageEntryId = '';
 let selectedLedgerImageIndex = 0;
 let editingLedgerEntryId = '';
+let ledgerEditDraft = null;
+let ledgerNewDraft = null;
+let nextLedgerSplitDraftId = 0;
 let isClearingLedgerData = false;
 let pendingLedgerImageFocus = null;
 let seedingCurrencyRates = false;
@@ -104,6 +111,7 @@ let appVersion = '';
 let stopProfile;
 let stopSettings;
 let stopLedger;
+let stopLedgerSplits;
 let stopLedgerImages;
 let stopUsers;
 let deferredInstallPrompt = null;
@@ -322,9 +330,9 @@ function resultRate(currency, resultCurrency) {
   return publicResultRate(sourceCurrency, resultCurrency);
 }
 
-function amountInResultCurrency(entry, resultCurrency) {
-  const amount = Number(entry.amount);
-  const sourceCurrency = normalizeCurrency(entry.currency) || DEFAULT_CURRENCY;
+function amountInResultCurrency(amountValue, currency, resultCurrency) {
+  const amount = Number(amountValue);
+  const sourceCurrency = normalizeCurrency(currency) || DEFAULT_CURRENCY;
   const rate = resultRate(sourceCurrency, resultCurrency);
   if (!Number.isFinite(amount) || amount <= 0 || !isPositiveRate(rate)) return null;
   return amount * rate;
@@ -338,7 +346,9 @@ function unavailableLedgerRateCurrencies(resultCurrency) {
   const unavailableCurrencies = new Set();
 
   ledgerEntries.forEach((entry) => {
-    if (entry.cleared) return;
+    const hasUnclearedSplit = ledgerSplitsForEntry(entry.id)
+      .some((split) => !split.cleared);
+    if (!hasUnclearedSplit) return;
 
     const sourceCurrency = normalizeCurrency(entry.currency) || DEFAULT_CURRENCY;
     if (
@@ -496,13 +506,25 @@ function calculateBalances() {
   const resultCurrency = profileCurrency();
   const balances = new Map();
   ledgerEntries.forEach((entry) => {
-    if (entry.cleared) return;
-    const amount = amountInResultCurrency(entry, resultCurrency);
-    const debtorId = entry.debtorId || entry.owedBy;
-    const creditorId = entry.creditorId || entry.paidBy;
-    if (!Number.isFinite(amount) || amount <= 0 || !debtorId || !creditorId) return;
-    balances.set(creditorId, (balances.get(creditorId) || 0) + amount);
-    balances.set(debtorId, (balances.get(debtorId) || 0) - amount);
+    ledgerSplitsForEntry(entry.id).forEach((split) => {
+      if (split.cleared) return;
+      const amount = amountInResultCurrency(
+        split.amount,
+        entry.currency,
+        resultCurrency,
+      );
+      const debtorId = split.debtorId;
+      const creditorId = entry.creditorId;
+      if (
+        !Number.isFinite(amount)
+        || amount <= 0
+        || !debtorId
+        || !creditorId
+        || debtorId === creditorId
+      ) return;
+      balances.set(creditorId, (balances.get(creditorId) || 0) + amount);
+      balances.set(debtorId, (balances.get(debtorId) || 0) - amount);
+    });
   });
   return balances;
 }
@@ -736,17 +758,285 @@ function accountOptions(selectedUserId, excludedUserId = '') {
     .join('');
 }
 
-function updateCreditorOptions(event) {
-  const debtorId = event.currentTarget.value;
-  const creditorSelect = event.currentTarget.form?.querySelector('[name="creditorId"]');
-  if (!creditorSelect) return;
+function ledgerSplitDocumentId(entryId, debtorId) {
+  return `${entryId}_${debtorId}`;
+}
 
-  const currentCreditorId = creditorSelect.value;
-  const fallbackCreditorId = activeUsers.find((user) => user.id !== debtorId)?.id || '';
-  const selectedCreditorId = currentCreditorId !== debtorId
-    ? currentCreditorId
-    : fallbackCreditorId;
-  creditorSelect.innerHTML = accountOptions(selectedCreditorId, debtorId);
+function ledgerSplitsForEntry(entryId) {
+  return ledgerSplits
+    .filter((split) => split.ledgerId === entryId)
+    .sort((left, right) => {
+      const leftPosition = Number.isInteger(left.position)
+        ? left.position
+        : Number.MAX_SAFE_INTEGER;
+      const rightPosition = Number.isInteger(right.position)
+        ? right.position
+        : Number.MAX_SAFE_INTEGER;
+      if (leftPosition !== rightPosition) return leftPosition - rightPosition;
+      const createdDifference = createdAtValue(left) - createdAtValue(right);
+      return createdDifference || left.id.localeCompare(right.id);
+    });
+}
+
+function ledgerEntryClearState(entryId) {
+  const splits = ledgerSplitsForEntry(entryId);
+  if (!splits.length) return 'empty';
+  const clearedCount = splits.filter((split) => split.cleared).length;
+  if (clearedCount === 0) return 'active';
+  if (clearedCount === splits.length) return 'cleared';
+  return 'partial';
+}
+
+function ledgerDataReady() {
+  return ledgerEntriesReady && ledgerSplitsReady;
+}
+
+function updateLedgerSplitInheritedValues(form, creditorId, currency) {
+  if (!form) return;
+
+  const creditor = userAlias(knownUserById(creditorId));
+  const normalizedCurrency = normalizeCurrency(currency) || DEFAULT_CURRENCY;
+  form.querySelectorAll('[data-ledger-split-creditor]').forEach((output) => {
+    output.textContent = creditor;
+  });
+  form.querySelectorAll('[data-ledger-split-currency]').forEach((output) => {
+    output.textContent = normalizedCurrency;
+  });
+  form.querySelectorAll('[data-ledger-split-draft-id]').forEach((row) => {
+    const debtorId = row.querySelector('[name="debtorId"]')?.value || '';
+    const debtor = userAlias(knownUserById(debtorId));
+    [
+      row.querySelector('[data-toggle-edit-split]'),
+      row.querySelector('[data-delete-edit-split]'),
+      row.querySelector('[data-remove-new-split]'),
+    ].filter(Boolean).forEach((button) => {
+      button.setAttribute(
+        'aria-label',
+        `${button.textContent.trim()}: ${debtor}`,
+      );
+    });
+  });
+}
+
+function nextSplitDraftId() {
+  nextLedgerSplitDraftId += 1;
+  return `split-draft-${nextLedgerSplitDraftId}`;
+}
+
+function createLedgerNewDraft() {
+  const creditorId = activeUsers.some((user) => user.id === profile.uid)
+    ? profile.uid
+    : activeUsers[0]?.id || '';
+  const debtor = activeUsers.find((user) => user.id !== creditorId);
+  return {
+    creditorId,
+    currency: normalizeCurrency(settings.defaultCurrency) || DEFAULT_CURRENCY,
+    note: '',
+    splits: debtor ? [
+      {
+        amount: '',
+        cleared: false,
+        debtorId: debtor.id,
+        draftId: nextSplitDraftId(),
+        id: '',
+      },
+    ] : [],
+  };
+}
+
+function discardLedgerNewDraft() {
+  ledgerNewDraft = null;
+}
+
+function captureLedgerNewDraft(form) {
+  if (!form || !ledgerNewDraft) return;
+  ledgerNewDraft.creditorId = String(
+    form.elements.creditorId?.value || ledgerNewDraft.creditorId,
+  );
+  ledgerNewDraft.currency = normalizeCurrency(form.elements.currency?.value)
+    || ledgerNewDraft.currency;
+  ledgerNewDraft.note = String(form.elements.note?.value || '');
+  form.querySelectorAll('[data-ledger-split-draft-id]').forEach((row) => {
+    const split = ledgerNewDraft.splits.find(
+      (item) => item.draftId === row.dataset.ledgerSplitDraftId,
+    );
+    if (!split) return;
+    split.debtorId = row.querySelector('[name="debtorId"]')?.value || '';
+    split.amount = row.querySelector('[name="amount"]')?.value || '';
+  });
+}
+
+function createLedgerEditDraft(entry) {
+  const splits = ledgerSplitsForEntry(entry.id);
+  return {
+    creditorId: entry.creditorId,
+    currency: normalizeCurrency(entry.currency) || DEFAULT_CURRENCY,
+    entryId: entry.id,
+    note: entry.note || '',
+    originalSplitIds: splits.map((split) => split.id),
+    splits: splits.map((split) => ({
+      amount: String(split.amount ?? ''),
+      cleared: Boolean(split.cleared),
+      debtorId: split.debtorId,
+      draftId: nextSplitDraftId(),
+      id: split.id,
+    })),
+  };
+}
+
+function discardLedgerEditDraft() {
+  editingLedgerEntryId = '';
+  ledgerEditDraft = null;
+}
+
+function captureLedgerEditDraft(form) {
+  if (!form || !ledgerEditDraft) return;
+  ledgerEditDraft.note = String(form.elements.note?.value || '');
+  ledgerEditDraft.currency = normalizeCurrency(form.elements.currency?.value)
+    || ledgerEditDraft.currency;
+  form.querySelectorAll('[data-ledger-split-draft-id]').forEach((row) => {
+    const split = ledgerEditDraft.splits.find(
+      (item) => item.draftId === row.dataset.ledgerSplitDraftId,
+    );
+    if (!split) return;
+    split.debtorId = row.querySelector('[name="debtorId"]')?.value || '';
+    split.amount = row.querySelector('[name="amount"]')?.value || '';
+  });
+}
+
+function availableLedgerDebtor(draft, usedDebtorIds = new Set()) {
+  if (!activeUsers.some((user) => user.id === draft?.creditorId)) {
+    return null;
+  }
+  return activeUsers.find((user) => (
+    user.id !== draft.creditorId
+    && !usedDebtorIds.has(user.id)
+  )) || null;
+}
+
+function reconcileLedgerNewDraftDebtors() {
+  if (!ledgerNewDraft) return;
+
+  const usedDebtorIds = new Set();
+  ledgerNewDraft.splits.forEach((split) => {
+    const debtorIsAvailable = activeUsers.some((user) => (
+      user.id === split.debtorId
+      && user.id !== ledgerNewDraft.creditorId
+    )) && !usedDebtorIds.has(split.debtorId);
+    if (!debtorIsAvailable) {
+      split.debtorId = availableLedgerDebtor(
+        ledgerNewDraft,
+        usedDebtorIds,
+      )?.id || '';
+    }
+    if (split.debtorId) usedDebtorIds.add(split.debtorId);
+  });
+}
+
+function updateNewEntryCreditor(event) {
+  const form = event.currentTarget.form;
+  captureLedgerNewDraft(form);
+  reconcileLedgerNewDraftDebtors();
+  notice = '';
+  render();
+}
+
+function addNewLedgerSplitDraft(form) {
+  if (!ledgerNewDraft) return;
+  captureLedgerNewDraft(form);
+  if (!activeUsers.some((user) => user.id === ledgerNewDraft.creditorId)) {
+    setErrorNotice(t('inactivePayerCannotAddDebt'));
+    return;
+  }
+  if (ledgerNewDraft.splits.length >= MAX_LEDGER_SPLITS) {
+    setErrorNotice(t('maximumDebts', { max: MAX_LEDGER_SPLITS }));
+    return;
+  }
+
+  const usedDebtorIds = new Set(
+    ledgerNewDraft.splits.map((split) => split.debtorId),
+  );
+  const debtor = availableLedgerDebtor(ledgerNewDraft, usedDebtorIds);
+  if (!debtor) {
+    setErrorNotice(t('noAvailableDebtors'));
+    return;
+  }
+
+  ledgerNewDraft.splits.push({
+    amount: '',
+    cleared: false,
+    debtorId: debtor.id,
+    draftId: nextSplitDraftId(),
+    id: '',
+  });
+  notice = '';
+  render();
+}
+
+function removeNewLedgerSplitDraft(form, draftId) {
+  captureLedgerNewDraft(form);
+  if (!ledgerNewDraft || ledgerNewDraft.splits.length <= 1) return;
+  ledgerNewDraft.splits = ledgerNewDraft.splits.filter(
+    (split) => split.draftId !== draftId,
+  );
+  notice = '';
+  render();
+}
+
+function addLedgerSplitDraft(form) {
+  if (!ledgerEditDraft) return;
+  captureLedgerEditDraft(form);
+  if (!activeUsers.some((user) => user.id === ledgerEditDraft.creditorId)) {
+    setErrorNotice(t('inactivePayerCannotAddDebt'));
+    return;
+  }
+  if (ledgerEditDraft.splits.length >= MAX_LEDGER_SPLITS) {
+    setErrorNotice(t('maximumDebts', { max: MAX_LEDGER_SPLITS }));
+    return;
+  }
+
+  const usedDebtorIds = new Set(
+    ledgerEditDraft.splits.map((split) => split.debtorId),
+  );
+  const debtor = availableLedgerDebtor(ledgerEditDraft, usedDebtorIds);
+  if (!debtor) {
+    setErrorNotice(t('noAvailableDebtors'));
+    return;
+  }
+
+  ledgerEditDraft.splits.push({
+    amount: '',
+    cleared: false,
+    debtorId: debtor.id,
+    draftId: nextSplitDraftId(),
+    id: '',
+  });
+  notice = '';
+  render();
+}
+
+function toggleLedgerSplitDraft(form, draftId) {
+  captureLedgerEditDraft(form);
+  const split = ledgerEditDraft?.splits.find((item) => item.draftId === draftId);
+  if (!split) return;
+  split.cleared = !split.cleared;
+  render();
+}
+
+function removeLedgerSplitDraft(form, draftId) {
+  captureLedgerEditDraft(form);
+  if (!ledgerEditDraft) return;
+  if (ledgerEditDraft.splits.length === 1) {
+    if (window.confirm(t('deleteLastDebtConfirm'))) {
+      void removeLedgerEntry(ledgerEditDraft.entryId);
+    }
+    return;
+  }
+
+  ledgerEditDraft.splits = ledgerEditDraft.splits.filter(
+    (split) => split.draftId !== draftId,
+  );
+  render();
 }
 
 function canManageEntry(entry) {
@@ -882,12 +1172,15 @@ function renderLedgerEntryImagePicker(entryId = '') {
   const imageCount = pendingLedgerEntryImageFiles(imageKey).length;
   const pickerLabel = ledgerEntryImagePickerLabel(imageCount);
 
-  return `<label class="file-picker entry-camera-button" title="${escapeHtml(pickerLabel)}">
-    <input class="sr-only" name="entryImageCamera" type="file" accept="image/*" capture="environment" multiple />
-    <span aria-hidden="true">📷</span>
-    <span class="entry-image-count"${imageCount ? '' : ' hidden'} aria-hidden="true">${escapeHtml(imageCount)}</span>
-    <span class="sr-only entry-image-label">${escapeHtml(pickerLabel)}</span>
-  </label>`;
+  return `<div class="entry-camera-field">
+    <span class="entry-camera-caption">${escapeHtml(t('image'))}</span>
+    <label class="file-picker entry-camera-button" title="${escapeHtml(pickerLabel)}">
+      <input class="sr-only" name="entryImageCamera" type="file" accept="image/*" capture="environment" multiple />
+      <span aria-hidden="true">📷</span>
+      <span class="entry-image-count"${imageCount ? '' : ' hidden'} aria-hidden="true">${escapeHtml(imageCount)}</span>
+      <span class="sr-only entry-image-label">${escapeHtml(pickerLabel)}</span>
+    </label>
+  </div>`;
 }
 
 function bindLedgerEntryImagePicker(form, entryId = '') {
@@ -952,15 +1245,17 @@ function renderLedgerImageViewer() {
     : 0;
   selectedLedgerImageIndex = currentIndex;
   const currentImage = images[currentIndex] || null;
-  const debtor = userAlias(knownUserById(entry.debtorId || entry.owedBy));
-  const creditor = userAlias(knownUserById(entry.creditorId || entry.paidBy));
+  const creditor = userAlias(knownUserById(entry.creditorId));
+  const imageContext = entry.note
+    ? `${entry.note} · ${t('paidBy')} ${creditor}`
+    : `${t('paidBy')} ${creditor}`;
 
   return `<section class="page-content narrow-content">
     <div class="page-heading ledger-image-heading">
       <div>
         <p class="eyebrow">${escapeHtml(t('ledger'))}</p>
         <h2>${escapeHtml(t('image'))}</h2>
-        <p class="muted">${escapeHtml(`${debtor} ${t('debtConnector')} ${creditor}`)}</p>
+        <p class="muted">${escapeHtml(imageContext)}</p>
       </div>
       <button class="secondary-button" type="button" data-action="back-to-ledger">${escapeHtml(t('backToLedger'))}</button>
     </div>
@@ -1118,31 +1413,118 @@ function renderSettlementSummary(myBalance) {
 }
 
 function renderLedgerEntryEdit(entry) {
-  const debtorId = entry.debtorId || entry.owedBy;
-  const creditorId = entry.creditorId || entry.paidBy;
-  const currency = entry.currency || DEFAULT_CURRENCY;
+  if (!ledgerEditDraft || ledgerEditDraft.entryId !== entry.id) {
+    ledgerEditDraft = createLedgerEditDraft(entry);
+  }
 
-  return `<tr class="ledger-row-editing">
-    <td colspan="10">
-      <form id="ledger-edit-form" class="entry-form ledger-edit-form">
-        <div class="entry-note-row">
-          <label class="field"><span>${escapeHtml(t('note'))}</span><input name="note" maxlength="160" value="${escapeHtml(entry.note || '')}" placeholder="${escapeHtml(t('notePlaceholder'))}" /></label>
-          ${renderLedgerEntryImagePicker(entry.id)}
+  const creditor = userAlias(knownUserById(ledgerEditDraft.creditorId));
+  const usedDebtorIds = new Set(
+    ledgerEditDraft.splits.map((split) => split.debtorId),
+  );
+  const canAddDebt = ledgerEditDraft.splits.length < MAX_LEDGER_SPLITS
+    && Boolean(availableLedgerDebtor(ledgerEditDraft, usedDebtorIds));
+  const splitRows = ledgerEditDraft.splits.map((split) => {
+    const debtor = userAlias(knownUserById(split.debtorId));
+    const toggleLabel = t(split.cleared ? 'restoreEntry' : 'clearEntry');
+    return `
+      <div
+        class="entry-split-row ledger-split-edit-row${split.cleared ? ' ledger-split-cleared' : ''}"
+        data-ledger-split-draft-id="${escapeHtml(split.draftId)}"
+      >
+        <div class="entry-split-party">
+          <label class="field">
+            <span class="entry-split-label">${escapeHtml(t('debtor'))}</span>
+            <select
+              name="debtorId"
+              aria-label="${escapeHtml(t('debtor'))}"
+              ${split.id ? 'disabled' : ''}
+            >
+              ${accountOptions(split.debtorId, ledgerEditDraft.creditorId)}
+            </select>
+          </label>
+          <span class="ledger-split-field-context">
+            <span>${escapeHtml(t('debtConnector'))}</span>
+            <output
+              data-ledger-split-creditor
+              aria-label="${escapeHtml(t('creditor'))}"
+            >${escapeHtml(creditor)}</output>
+          </span>
         </div>
-        <div class="entry-details-row">
-          <label class="field"><span>${escapeHtml(t('debtor'))}</span><select name="debtorId" aria-label="${escapeHtml(t('debtor'))}">${accountOptions(debtorId)}</select></label>
-          <span class="debt-connector-inline" aria-hidden="true">${escapeHtml(t('debtConnector'))}</span>
-          <label class="field"><span>${escapeHtml(t('creditor'))}</span><select name="creditorId" aria-label="${escapeHtml(t('creditor'))}">${accountOptions(creditorId, debtorId)}</select></label>
-          <label class="field entry-amount-field"><span>${escapeHtml(t('amount'))}</span><input name="amount" type="number" min="0.01" step="0.01" inputmode="decimal" value="${escapeHtml(String(entry.amount ?? ''))}" required /></label>
-          <label class="field"><span>${escapeHtml(t('currency'))}</span><select name="currency">${renderCurrencyOptions(currency)}</select></label>
+        <div class="entry-split-money">
+          <label class="field entry-amount-field">
+            <span class="entry-split-label">${escapeHtml(t('amount'))}</span>
+            <input
+              name="amount"
+              type="number"
+              min="0.01"
+              step="0.01"
+              inputmode="decimal"
+              value="${escapeHtml(split.amount)}"
+              required
+            />
+          </label>
+          <output
+            class="ledger-split-field-context"
+            data-ledger-split-currency
+            aria-label="${escapeHtml(t('currency'))}"
+          >${escapeHtml(ledgerEditDraft.currency)}</output>
         </div>
-        <div class="ledger-edit-actions">
-          <button type="submit">${escapeHtml(t('saveChanges'))}</button>
-          <button class="secondary-button" type="button" data-cancel-edit-entry="${escapeHtml(entry.id)}">${escapeHtml(t('cancel'))}</button>
+        <div class="entry-split-actions ledger-split-edit-actions">
+          <button
+            class="secondary-button"
+            type="button"
+            data-toggle-edit-split="${escapeHtml(split.draftId)}"
+            aria-label="${escapeHtml(`${toggleLabel}: ${debtor}`)}"
+          >${escapeHtml(toggleLabel)}</button>
+          <button
+            class="secondary-button danger-text"
+            type="button"
+            data-delete-edit-split="${escapeHtml(split.draftId)}"
+            aria-label="${escapeHtml(`${t('removeDebt')}: ${debtor}`)}"
+          >${escapeHtml(t('removeDebt'))}</button>
         </div>
-      </form>
-    </td>
-  </tr>`;
+      </div>
+    `;
+  }).join('');
+
+  return `<article class="ledger-group ledger-group-editing">
+    <form id="ledger-edit-form" class="entry-form ledger-edit-form">
+      <div class="entry-note-row">
+        <label class="field"><span>${escapeHtml(t('note'))}</span><input name="note" maxlength="160" value="${escapeHtml(ledgerEditDraft.note)}" placeholder="${escapeHtml(t('notePlaceholder'))}" /></label>
+        ${renderLedgerEntryImagePicker(entry.id)}
+      </div>
+      <div class="entry-shared-fields ledger-edit-shared-fields">
+        <label class="field">
+          <span>${escapeHtml(t('creditor'))}</span>
+          <input value="${escapeHtml(creditor)}" readonly />
+        </label>
+        <label class="field">
+          <span>${escapeHtml(t('currency'))}</span>
+          <select name="currency">${renderCurrencyOptions(ledgerEditDraft.currency)}</select>
+        </label>
+      </div>
+      <section class="entry-debts ledger-edit-debts">
+        <div class="card-heading">
+          <div>
+            <h4>${escapeHtml(t('debts'))}</h4>
+          </div>
+          <button
+            class="secondary-button"
+            type="button"
+            data-add-edit-split
+            ${canAddDebt ? '' : 'disabled'}
+          >${escapeHtml(t('addDebt'))}</button>
+        </div>
+        <div class="entry-split-list ledger-split-edit-list">
+          ${splitRows || `<p class="muted">${escapeHtml(t('noDebts'))}</p>`}
+        </div>
+      </section>
+      <div class="ledger-edit-actions">
+        <button type="submit">${escapeHtml(t('saveChanges'))}</button>
+        <button class="secondary-button" type="button" data-cancel-edit-entry="${escapeHtml(entry.id)}">${escapeHtml(t('cancel'))}</button>
+      </div>
+    </form>
+  </article>`;
 }
 
 function filteredLedgerEntries() {
@@ -1150,17 +1532,20 @@ function filteredLedgerEntries() {
   if (!filter) return ledgerEntries;
 
   return ledgerEntries.filter((entry) => {
-    const debtorId = entry.debtorId || entry.owedBy;
-    const creditorId = entry.creditorId || entry.paidBy;
-    const debtor = userAlias(knownUserById(debtorId));
-    const creditor = userAlias(knownUserById(creditorId));
-    const amount = Number(entry.amount);
+    const creditor = userAlias(knownUserById(entry.creditorId));
+    const splitSearchValues = ledgerSplitsForEntry(entry.id).flatMap((split) => {
+      const amount = Number(split.amount);
+      return [
+        userAlias(knownUserById(split.debtorId)),
+        Number.isFinite(amount) ? String(amount) : '',
+        Number.isFinite(amount) ? amount.toFixed(2) : '',
+      ];
+    });
     const searchText = [
-      debtor,
       creditor,
-      Number.isFinite(amount) ? String(amount) : '',
-      Number.isFinite(amount) ? amount.toFixed(2) : '',
+      entry.currency || '',
       entry.note || '',
+      ...splitSearchValues,
     ].join(' ').toLocaleLowerCase();
 
     return searchText.includes(filter);
@@ -1168,46 +1553,66 @@ function filteredLedgerEntries() {
 }
 
 function renderLedgerRows(entries = ledgerEntries) {
+  if (!ledgerDataReady()) {
+    return `<p class="ledger-empty">${escapeHtml(t('loading'))}</p>`;
+  }
   if (!entries.length) {
     const message = ledgerEntries.length ? 'noMatchingEntries' : 'noEntries';
-    return `<tr><td class="empty-cell" colspan="10">${escapeHtml(t(message))}</td></tr>`;
+    return `<p class="ledger-empty">${escapeHtml(t(message))}</p>`;
   }
 
-  return entries.flatMap((entry) => {
+  return entries.map((entry) => {
     if (editingLedgerEntryId === entry.id) {
-      return [renderLedgerEntryEdit(entry)];
+      return renderLedgerEntryEdit(entry);
     }
 
-    const debtorId = entry.debtorId || entry.owedBy;
-    const creditorId = entry.creditorId || entry.paidBy;
-    const debtor = userAlias(knownUserById(debtorId));
-    const creditor = userAlias(knownUserById(creditorId));
+    const splits = ledgerSplitsForEntry(entry.id);
+    const creditor = userAlias(knownUserById(entry.creditorId));
     const creator = entry.createdBy 
       ? userAlias(knownUserById(entry.createdBy)) || t('unknownUser')
       : '—';
-    const cleared = Boolean(entry.cleared);
+    const clearState = ledgerEntryClearState(entry.id);
+    const status = clearState === 'partial'
+      ? t('partiallyCleared')
+      : clearState === 'cleared'
+        ? t('clearedStatus')
+        : '';
+    const splitRows = splits.map((split) => {
+      const debtor = userAlias(knownUserById(split.debtorId));
+      const amount = Number(split.amount);
+      return `<div class="ledger-split-row${split.cleared ? ' ledger-split-cleared' : ''}">
+        ${split.cleared ? `<span class="sr-only">${escapeHtml(t('clearedStatus'))}</span>` : ''}
+        <span class="ledger-split-people">
+          <strong title="${escapeHtml(debtor)}">${escapeHtml(debtor)}</strong>
+          <span>${escapeHtml(t('debtConnector'))}</span>
+          <strong title="${escapeHtml(creditor)}">${escapeHtml(creditor)}</strong>
+        </span>
+        <strong class="ledger-split-amount">${escapeHtml(Number.isFinite(amount) ? amount.toFixed(2) : '0.00')} ${escapeHtml(entry.currency || DEFAULT_CURRENCY)}</strong>
+      </div>`;
+    }).join('');
     const actions = canManageEntry(entry)
-      ? `<div class="entry-action-list">
+      ? `<div class="ledger-group-actions">
         <button class="clear-entry-button" type="button" data-edit-entry="${escapeHtml(entry.id)}">${escapeHtml(t('editEntry'))}</button>
-        <button class="clear-entry-button" type="button" data-toggle-clear-entry="${escapeHtml(entry.id)}">${escapeHtml(t(cleared ? 'restoreEntry' : 'clearEntry'))}</button>
+        ${splits.length ? `<button class="clear-entry-button" type="button" data-toggle-clear-entry="${escapeHtml(entry.id)}">${escapeHtml(t(clearState === 'cleared' ? 'restoreAllDebts' : 'clearAllDebts'))}</button>` : ''}
         <button class="clear-entry-button danger" type="button" data-delete-entry="${escapeHtml(entry.id)}">${escapeHtml(t('deleteEntry'))}</button>
       </div>`
-      : '—';
-    return [`<tr class="${cleared ? 'ledger-row-cleared' : ''}">
-    <td class="ledger-mobile-summary">${escapeHtml(debtor)} <span class="settlement-arrow">${escapeHtml(t('debtConnector'))}</span> ${escapeHtml(creditor)}</td>
-    <td class="ledger-user-cell" title="${escapeHtml(debtor)}">${escapeHtml(debtor)}</td>
-    <td class="debt-table-connector">${escapeHtml(t('debtConnector'))}</td>
-    <td class="ledger-user-cell" title="${escapeHtml(creditor)}">${escapeHtml(creditor)}</td>
-    <td>${escapeHtml(entry.amount?.toFixed(2) || '0.00')}</td>
-    <td>${escapeHtml(entry.currency || DEFAULT_CURRENCY)}</td>
-    <td>${escapeHtml(entry.note || '—')}</td>
-    <td class="ledger-image-cell">${renderLedgerImageButton(entry)}</td>
-    <td class="ledger-user-cell ledger-creator-cell" title="${escapeHtml(creator)}">
-      <span class="ledger-creator-desktop">${escapeHtml(creator)}</span>
-      <span class="ledger-creator-mobile">${escapeHtml(t('createdBy', { name: creator }))}</span>
-    </td>
-    <td class="entry-actions">${actions}</td>
-  </tr>`];
+      : '';
+    return `<article class="ledger-group ledger-group-${escapeHtml(clearState)}">
+      <header class="ledger-group-header">
+        <div class="ledger-group-title">
+          <strong class="ledger-group-note">${escapeHtml(entry.note || '—')}</strong>
+          ${status ? `<span class="ledger-group-status">${escapeHtml(status)}</span>` : ''}
+        </div>
+        <div class="ledger-image-cell">${renderLedgerImageButton(entry)}</div>
+      </header>
+      <div class="ledger-split-list">
+        ${splitRows || `<p class="muted">${escapeHtml(t('noDebts'))}</p>`}
+      </div>
+      <footer class="ledger-group-footer">
+        <span class="ledger-group-creator">${escapeHtml(t('createdBy', { name: creator }))}</span>
+        ${actions}
+      </footer>
+    </article>`;
   }).join('');
 }
 
@@ -1220,9 +1625,74 @@ function refreshLedgerRows() {
 }
 
 function renderNewEntry() {
-  const entryCurrency = settings.defaultCurrency;
   const canAddEntry = activeUsers.length > 1;
-  const creditorDefault = activeUsers.find((user) => user.id !== profile.uid)?.id || '';
+  if (canAddEntry && !ledgerNewDraft) {
+    ledgerNewDraft = createLedgerNewDraft();
+  }
+
+  const draft = ledgerNewDraft;
+  const entryCurrency = draft?.currency || settings.defaultCurrency;
+  const creditor = userAlias(knownUserById(draft?.creditorId));
+  const usedDebtorIds = new Set(
+    draft?.splits.map((split) => split.debtorId) || [],
+  );
+  const canAddDebt = Boolean(draft)
+    && draft.splits.length < MAX_LEDGER_SPLITS
+    && Boolean(availableLedgerDebtor(draft, usedDebtorIds));
+  const canRemoveDebt = (draft?.splits.length || 0) > 1;
+  const splitRows = draft?.splits.map((split) => {
+    const debtor = userAlias(knownUserById(split.debtorId));
+    return `
+      <div
+        class="entry-split-row"
+        data-ledger-split-draft-id="${escapeHtml(split.draftId)}"
+      >
+        <div class="entry-split-party">
+          <label class="field new-entry-debtor-field">
+            <span class="entry-split-label">${escapeHtml(t('debtor'))}</span>
+            <select
+              name="debtorId"
+              aria-label="${escapeHtml(t('debtor'))}"
+            >${accountOptions(split.debtorId, draft.creditorId)}</select>
+          </label>
+          <span class="ledger-split-field-context">
+            <span>${escapeHtml(t('debtConnector'))}</span>
+            <output
+              data-ledger-split-creditor
+              aria-label="${escapeHtml(t('creditor'))}"
+            >${escapeHtml(creditor)}</output>
+          </span>
+        </div>
+        <div class="entry-split-money">
+          <label class="field entry-amount-field new-entry-amount-field">
+            <span class="entry-split-label">${escapeHtml(t('amount'))}</span>
+            <input
+              name="amount"
+              type="number"
+              min="0.01"
+              step="0.01"
+              inputmode="decimal"
+              value="${escapeHtml(split.amount)}"
+              required
+            />
+          </label>
+          <output
+            class="ledger-split-field-context"
+            data-ledger-split-currency
+            aria-label="${escapeHtml(t('currency'))}"
+          >${escapeHtml(entryCurrency)}</output>
+        </div>
+        ${canRemoveDebt ? `<div class="entry-split-actions">
+          <button
+            class="secondary-button danger-text"
+            type="button"
+            data-remove-new-split="${escapeHtml(split.draftId)}"
+            aria-label="${escapeHtml(`${t('removeDebt')}: ${debtor}`)}"
+          >${escapeHtml(t('removeDebt'))}</button>
+        </div>` : ''}
+      </div>
+    `;
+  }).join('') || '';
 
   return `<section class="page-content narrow-content">
     <div class="page-heading">
@@ -1236,15 +1706,36 @@ function renderNewEntry() {
     <section class="accounting-card">
       ${canAddEntry ? `<form id="ledger-form" class="entry-form new-entry-form">
         <div class="entry-note-row">
-          <label class="field"><span>${escapeHtml(t('note'))}</span><input name="note" maxlength="160" placeholder="${escapeHtml(t('notePlaceholder'))}" /></label>
+          <label class="field"><span>${escapeHtml(t('note'))}</span><input name="note" maxlength="160" value="${escapeHtml(draft.note)}" placeholder="${escapeHtml(t('notePlaceholder'))}" /></label>
           ${renderLedgerEntryImagePicker()}
         </div>
-        <div class="entry-details-row">
-          <label class="field"><span>${escapeHtml(t('debtor'))}</span><select name="debtorId" aria-label="${escapeHtml(t('debtor'))}">${accountOptions(profile.uid)}</select></label>
-          <span class="debt-connector-inline" aria-hidden="true">${escapeHtml(t('debtConnector'))}</span>
-          <label class="field"><span>${escapeHtml(t('creditor'))}</span><select name="creditorId" aria-label="${escapeHtml(t('creditor'))}">${accountOptions(creditorDefault, profile.uid)}</select></label>
-          <label class="field entry-amount-field"><span>${escapeHtml(t('amount'))}</span><input name="amount" type="number" min="0.01" step="0.01" inputmode="decimal" required /></label>
-          <label class="field"><span>${escapeHtml(t('currency'))}</span><select name="currency">${renderCurrencyOptions(entryCurrency)}</select></label>
+        <div class="entry-details-row new-entry-layout">
+          <div class="entry-shared-fields">
+            <label class="field new-entry-creditor-field">
+              <span>${escapeHtml(t('creditor'))}</span>
+              <select name="creditorId" aria-label="${escapeHtml(t('creditor'))}">${accountOptions(draft.creditorId)}</select>
+            </label>
+            <label class="field new-entry-currency-field">
+              <span>${escapeHtml(t('currency'))}</span>
+              <select name="currency">${renderCurrencyOptions(entryCurrency)}</select>
+            </label>
+          </div>
+          <section class="entry-debts">
+            <div class="card-heading">
+              <div>
+                <h4>${escapeHtml(t('debts'))}</h4>
+              </div>
+              <button
+                class="secondary-button"
+                type="button"
+                data-add-new-split
+                ${canAddDebt ? '' : 'disabled'}
+              >${escapeHtml(t('addDebt'))}</button>
+            </div>
+            <div class="entry-split-list">
+              ${splitRows}
+            </div>
+          </section>
         </div>
         <button type="submit">${escapeHtml(t('saveEntry'))}</button>
       </form>` : `<p class="muted">${escapeHtml(t('needTwoUsers'))}</p>`}
@@ -1267,7 +1758,10 @@ function renderConversion() {
 }
 
 function renderLedger() {
-  const myBalance = calculateBalances().get(profile.uid) || 0;
+  const dataReady = ledgerDataReady();
+  const myBalance = dataReady
+    ? calculateBalances().get(profile.uid) || 0
+    : 0;
 
   return `<section class="page-content">
     <div class="page-heading">
@@ -1284,15 +1778,10 @@ function renderLedger() {
         <span class="sr-only">${escapeHtml(t('ledgerSearch'))}</span>
         <input id="ledger-filter" type="search" value="${escapeHtml(ledgerFilter)}" placeholder="${escapeHtml(t('ledgerSearchPlaceholder'))}" aria-label="${escapeHtml(t('ledgerSearch'))}" autocomplete="off" />
       </label>
-      <div class="table-wrap">
-        <table class="ledger-table">
-          <thead><tr><th class="ledger-mobile-summary-column"></th><th class="ledger-user-column">${escapeHtml(t('debtor'))}</th><th class="ledger-debt-column" aria-label="${escapeHtml(t('debtConnector'))}"></th><th class="ledger-user-column">${escapeHtml(t('creditor'))}</th><th class="ledger-amount-column">${escapeHtml(t('amount'))}</th><th>${escapeHtml(t('currency'))}</th><th>${escapeHtml(t('note'))}</th><th class="ledger-image-column">${escapeHtml(t('image'))}</th><th>${escapeHtml(t('creator'))}</th><th>${escapeHtml(t('action'))}</th></tr></thead>
-          <tbody id="ledger-rows">${renderLedgerRows(filteredLedgerEntries())}</tbody>
-        </table>
-      </div>
+      <div id="ledger-rows" class="ledger-list">${renderLedgerRows(filteredLedgerEntries())}</div>
     </section>
 
-    ${renderSettlementSummary(myBalance)}
+    ${dataReady ? renderSettlementSummary(myBalance) : ''}
   </section>`;
 }
 
@@ -1553,12 +2042,26 @@ function bindLedgerFilter() {
 function bindLedgerRows() {
   const ledgerEditForm = document.querySelector('#ledger-edit-form');
   ledgerEditForm?.addEventListener('submit', updateLedgerEntry);
-  ledgerEditForm?.elements.debtorId?.addEventListener('change', updateCreditorOptions);
+  ledgerEditForm?.addEventListener('input', () => {
+    captureLedgerEditDraft(ledgerEditForm);
+  });
+  ledgerEditForm?.addEventListener('change', () => {
+    captureLedgerEditDraft(ledgerEditForm);
+    updateLedgerSplitInheritedValues(
+      ledgerEditForm,
+      ledgerEditDraft?.creditorId,
+      ledgerEditDraft?.currency,
+    );
+  });
   bindLedgerEntryImagePicker(ledgerEditForm, editingLedgerEntryId);
   document.querySelectorAll('[data-edit-entry]').forEach((button) => {
     button.onclick = () => {
-      pendingLedgerEntryImages.delete(ledgerEntryImageKey(button.dataset.editEntry));
-      editingLedgerEntryId = button.dataset.editEntry;
+      const entryId = button.dataset.editEntry;
+      const entry = ledgerEntryById(entryId);
+      if (!entry || !canManageEntry(entry)) return;
+      pendingLedgerEntryImages.delete(ledgerEntryImageKey(entryId));
+      editingLedgerEntryId = entryId;
+      ledgerEditDraft = createLedgerEditDraft(entry);
       selectedLedgerImageEntryId = '';
       selectedLedgerImageIndex = 0;
       notice = '';
@@ -1570,25 +2073,42 @@ function bindLedgerRows() {
       pendingLedgerEntryImages.delete(
         ledgerEntryImageKey(button.dataset.cancelEditEntry),
       );
-      editingLedgerEntryId = '';
+      discardLedgerEditDraft();
       render();
     };
+  });
+  document.querySelectorAll('[data-add-edit-split]').forEach((button) => {
+    button.onclick = () => addLedgerSplitDraft(ledgerEditForm);
+  });
+  document.querySelectorAll('[data-toggle-edit-split]').forEach((button) => {
+    button.onclick = () => toggleLedgerSplitDraft(
+      ledgerEditForm,
+      button.dataset.toggleEditSplit,
+    );
+  });
+  document.querySelectorAll('[data-delete-edit-split]').forEach((button) => {
+    button.onclick = () => removeLedgerSplitDraft(
+      ledgerEditForm,
+      button.dataset.deleteEditSplit,
+    );
   });
   document.querySelectorAll('[data-delete-entry]').forEach((button) => {
     button.onclick = () => {
       if (confirm(t('deleteEntryConfirm'))) {
-        removeLedgerEntry(button.dataset.deleteEntry);
+        void removeLedgerEntry(button.dataset.deleteEntry);
       }
     };
   });
   document.querySelectorAll('[data-toggle-clear-entry]').forEach((button) => {
-    button.onclick = () => toggleLedgerEntryCleared(button.dataset.toggleClearEntry);
+    button.onclick = () => {
+      void toggleAllLedgerSplitsCleared(button.dataset.toggleClearEntry);
+    };
   });
   document.querySelectorAll('[data-view-ledger-image]').forEach((button) => {
     button.onclick = () => {
       selectedLedgerImageEntryId = button.dataset.viewLedgerImage;
       selectedLedgerImageIndex = 0;
-      editingLedgerEntryId = '';
+      discardLedgerEditDraft();
       render();
     };
   });
@@ -1628,7 +2148,8 @@ function bind() {
       activeView = button.dataset.view;
       selectedLedgerImageEntryId = '';
       selectedLedgerImageIndex = 0;
-      editingLedgerEntryId = '';
+      discardLedgerEditDraft();
+      discardLedgerNewDraft();
       notice = '';
       render();
     };
@@ -1646,7 +2167,30 @@ function bind() {
   document.querySelector('#add-user-form')?.addEventListener('submit', addAdminUser);
   const ledgerForm = document.querySelector('#ledger-form');
   ledgerForm?.addEventListener('submit', addLedgerEntry);
-  ledgerForm?.elements.debtorId?.addEventListener('change', updateCreditorOptions);
+  ledgerForm?.addEventListener('input', () => {
+    captureLedgerNewDraft(ledgerForm);
+  });
+  ledgerForm?.addEventListener('change', () => {
+    captureLedgerNewDraft(ledgerForm);
+    updateLedgerSplitInheritedValues(
+      ledgerForm,
+      ledgerNewDraft?.creditorId,
+      ledgerNewDraft?.currency,
+    );
+  });
+  ledgerForm?.elements.creditorId?.addEventListener(
+    'change',
+    updateNewEntryCreditor,
+  );
+  document.querySelectorAll('[data-add-new-split]').forEach((button) => {
+    button.onclick = () => addNewLedgerSplitDraft(ledgerForm);
+  });
+  document.querySelectorAll('[data-remove-new-split]').forEach((button) => {
+    button.onclick = () => removeNewLedgerSplitDraft(
+      ledgerForm,
+      button.dataset.removeNewSplit,
+    );
+  });
   bindLedgerEntryImagePicker(ledgerForm);
   bindLedgerFilter();
   bindLedgerRows();
@@ -1886,20 +2430,46 @@ async function addLedgerEntry(event) {
   event.preventDefault();
   const formElement = event.currentTarget;
   try {
-    const form = new FormData(formElement);
-    const debtorId = form.get('debtorId');
-    const creditorId = form.get('creditorId');
-    const amount = Number(form.get('amount'));
-    const currency = normalizeCurrency(form.get('currency'));
-    const note = String(form.get('note') || '').trim().slice(0, 160);
+    captureLedgerNewDraft(formElement);
+    if (!ledgerNewDraft) return;
+
+    const creditorId = String(ledgerNewDraft.creditorId || '');
+    const currency = normalizeCurrency(ledgerNewDraft.currency);
+    const note = ledgerNewDraft.note.trim().slice(0, 160);
+    const normalizedSplits = ledgerNewDraft.splits.map((split) => ({
+      amount: Number(split.amount),
+      debtorId: String(split.debtorId || ''),
+    }));
     const imageKey = ledgerEntryImageKey();
     const imageFiles = pendingLedgerEntryImageFiles(imageKey);
-    if (!debtorId || !creditorId || debtorId === creditorId) {
+    if (!normalizedSplits.length) {
+      setErrorNotice(t('atLeastOneDebt'));
+      return;
+    }
+    if (normalizedSplits.length > MAX_LEDGER_SPLITS) {
+      setErrorNotice(t('maximumDebts', { max: MAX_LEDGER_SPLITS }));
+      return;
+    }
+    if (
+      !creditorId
+      || normalizedSplits.some((split) => (
+        !split.debtorId
+        || split.debtorId === creditorId
+      ))
+    ) {
       setErrorNotice(t('differentPeople'));
       return;
     }
-    if (!Number.isFinite(amount) || amount <= 0) {
+    if (normalizedSplits.some((split) => (
+      !Number.isFinite(split.amount)
+      || split.amount <= 0
+    ))) {
       setErrorNotice(t('amountPositive'));
+      return;
+    }
+    const debtorIds = normalizedSplits.map((split) => split.debtorId);
+    if (new Set(debtorIds).size !== debtorIds.length) {
+      setErrorNotice(t('duplicateDebtor'));
       return;
     }
     if (!isAllowedCurrency(currency)) {
@@ -1929,14 +2499,29 @@ async function addLedgerEntry(event) {
     const ledgerReference = doc(collection(db, 'ledger'));
     const batch = writeBatch(db);
     batch.set(ledgerReference, {
-      amount,
-      cleared: false,
       creditorId,
       createdAt: serverTimestamp(),
       createdBy: profile.uid,
       currency,
-      debtorId,
       note,
+      updatedAt: serverTimestamp(),
+    });
+
+    normalizedSplits.forEach((split, position) => {
+      const splitReference = doc(
+        db,
+        'ledgerSplits',
+        ledgerSplitDocumentId(ledgerReference.id, split.debtorId),
+      );
+      batch.set(splitReference, {
+        amount: split.amount,
+        cleared: false,
+        createdAt: serverTimestamp(),
+        debtorId: split.debtorId,
+        ledgerId: ledgerReference.id,
+        position,
+        updatedAt: serverTimestamp(),
+      });
     });
 
     imageDataUrls.forEach((imageDataUrl) => {
@@ -1951,7 +2536,8 @@ async function addLedgerEntry(event) {
 
     await batch.commit();
     pendingLedgerEntryImages.delete(imageKey);
-    formElement.reset();
+    discardLedgerNewDraft();
+    activeView = 'ledger';
     setNotice(t('entryAdded'));
   } catch (error) {
     reportError(error);
@@ -1962,22 +2548,55 @@ async function updateLedgerEntry(event) {
   event.preventDefault();
   try {
     const entry = ledgerEntryById(editingLedgerEntryId);
-    if (!entry || !canManageEntry(entry)) return;
+    if (
+      !entry
+      || !canManageEntry(entry)
+      || ledgerEditDraft?.entryId !== entry.id
+    ) return;
 
-    const form = new FormData(event.currentTarget);
-    const debtorId = form.get('debtorId');
-    const creditorId = form.get('creditorId');
-    const amount = Number(form.get('amount'));
-    const currency = normalizeCurrency(form.get('currency'));
-    const note = String(form.get('note') || '').trim().slice(0, 160);
+    captureLedgerEditDraft(event.currentTarget);
+    const currency = normalizeCurrency(ledgerEditDraft.currency);
+    const note = ledgerEditDraft.note.trim().slice(0, 160);
+    const originalSplitIds = new Set(ledgerEditDraft.originalSplitIds);
+    const normalizedSplits = ledgerEditDraft.splits.map((split) => {
+      const debtorId = String(split.debtorId || '');
+      const expectedSplitId = ledgerSplitDocumentId(entry.id, debtorId);
+      return {
+        ...split,
+        amount: Number(split.amount),
+        debtorId,
+        id: split.id || (originalSplitIds.has(expectedSplitId)
+          ? expectedSplitId
+          : ''),
+      };
+    });
     const imageKey = ledgerEntryImageKey(entry.id);
     const imageFiles = pendingLedgerEntryImageFiles(imageKey);
-    if (!debtorId || !creditorId || debtorId === creditorId) {
+    if (!normalizedSplits.length) {
+      setErrorNotice(t('atLeastOneDebt'));
+      return;
+    }
+    if (normalizedSplits.length > MAX_LEDGER_SPLITS) {
+      setErrorNotice(t('maximumDebts', { max: MAX_LEDGER_SPLITS }));
+      return;
+    }
+    if (normalizedSplits.some((split) => (
+      !split.debtorId
+      || split.debtorId === entry.creditorId
+    ))) {
       setErrorNotice(t('differentPeople'));
       return;
     }
-    if (!Number.isFinite(amount) || amount <= 0) {
+    if (normalizedSplits.some((split) => (
+      !Number.isFinite(split.amount)
+      || split.amount <= 0
+    ))) {
       setErrorNotice(t('amountPositive'));
+      return;
+    }
+    const debtorIds = normalizedSplits.map((split) => split.debtorId);
+    if (new Set(debtorIds).size !== debtorIds.length) {
+      setErrorNotice(t('duplicateDebtor'));
       return;
     }
     if (!isAllowedCurrency(currency)) {
@@ -2006,11 +2625,46 @@ async function updateLedgerEntry(event) {
 
     const batch = writeBatch(db);
     batch.update(doc(db, 'ledger', entry.id), {
-      amount,
-      creditorId,
       currency,
-      debtorId,
       note,
+      updatedAt: serverTimestamp(),
+    });
+
+    const retainedSplitIds = new Set(
+      normalizedSplits
+        .map((split) => split.id)
+        .filter(Boolean),
+    );
+    ledgerEditDraft.originalSplitIds
+      .filter((splitId) => !retainedSplitIds.has(splitId))
+      .forEach((splitId) => {
+        batch.delete(doc(db, 'ledgerSplits', splitId));
+      });
+
+    normalizedSplits.forEach((split, position) => {
+      const splitId = ledgerSplitDocumentId(entry.id, split.debtorId);
+      const splitReference = doc(db, 'ledgerSplits', splitId);
+      if (split.id) {
+        if (split.id !== splitId) {
+          throw new Error('An existing debt cannot change its owing user.');
+        }
+        batch.update(splitReference, {
+          amount: split.amount,
+          cleared: Boolean(split.cleared),
+          position,
+          updatedAt: serverTimestamp(),
+        });
+        return;
+      }
+      batch.set(splitReference, {
+        amount: split.amount,
+        cleared: Boolean(split.cleared),
+        createdAt: serverTimestamp(),
+        debtorId: split.debtorId,
+        ledgerId: entry.id,
+        position,
+        updatedAt: serverTimestamp(),
+      });
     });
 
     imageDataUrls.forEach((imageDataUrl) => {
@@ -2025,7 +2679,7 @@ async function updateLedgerEntry(event) {
 
     await batch.commit();
     pendingLedgerEntryImages.delete(imageKey);
-    editingLedgerEntryId = '';
+    discardLedgerEditDraft();
     setNotice(t('entryUpdated'));
   } catch (error) {
     reportError(error);
@@ -2217,13 +2871,15 @@ async function clearAllLedgerData() {
   render();
 
   try {
-    const entriesRemoved = await deleteCollectionDocuments('ledger');
+    const debtsRemoved = await deleteCollectionDocuments('ledgerSplits');
     const imagesRemoved = await deleteCollectionDocuments('ledgerImages');
+    const entriesRemoved = await deleteCollectionDocuments('ledger');
     pendingLedgerEntryImages.clear();
     selectedLedgerImageEntryId = '';
     selectedLedgerImageIndex = 0;
-    editingLedgerEntryId = '';
+    discardLedgerEditDraft();
     setNotice(t('allLedgerDataCleared', {
+      debts: debtsRemoved,
       entries: entriesRemoved,
       images: imagesRemoved,
     }));
@@ -2236,35 +2892,68 @@ async function clearAllLedgerData() {
 }
 
 async function removeLedgerEntry(entryId) {
+  const entry = ledgerEntryById(entryId);
+  if (!entry || !canManageEntry(entry)) return;
+
   try {
+    const [splitSnapshot, imageSnapshot] = await Promise.all([
+      getDocs(query(
+        collection(db, 'ledgerSplits'),
+        where('ledgerId', '==', entryId),
+      )),
+      getDocs(query(
+        collection(db, 'ledgerImages'),
+        where('ledgerId', '==', entryId),
+      )),
+    ]);
+    if (
+      splitSnapshot.docs.length
+      + imageSnapshot.docs.length
+      + 1
+      > BATCH_DELETE_LIMIT
+    ) {
+      throw new Error('This expense has too many related documents to remove safely.');
+    }
+
     const batch = writeBatch(db);
+    splitSnapshot.docs.forEach((item) => batch.delete(item.ref));
+    imageSnapshot.docs.forEach((item) => batch.delete(item.ref));
     batch.delete(doc(db, 'ledger', entryId));
-    ledgerImagesForEntry(entryId).forEach((image) => {
-      batch.delete(doc(db, 'ledgerImages', image.id));
-    });
+    await batch.commit();
+
     if (selectedLedgerImageEntryId === entryId) {
       selectedLedgerImageEntryId = '';
       selectedLedgerImageIndex = 0;
     }
     if (editingLedgerEntryId === entryId) {
-      editingLedgerEntryId = '';
+      discardLedgerEditDraft();
     }
     pendingLedgerEntryImages.delete(ledgerEntryImageKey(entryId));
-    await batch.commit();
     setNotice(t('entryRemoved'));
   } catch (error) {
     reportError(error);
   }
 }
 
-async function toggleLedgerEntryCleared(entryId) {
+async function toggleAllLedgerSplitsCleared(entryId) {
   const entry = ledgerEntries.find((item) => item.id === entryId);
   if (!entry || !canManageEntry(entry)) return;
+  const splits = ledgerSplitsForEntry(entryId);
+  if (!splits.length) return;
 
   try {
-    const cleared = !entry.cleared;
-    await updateDoc(doc(db, 'ledger', entryId), { cleared });
-    setNotice(t(cleared ? 'entryCleared' : 'entryRestored'));
+    const cleared = !splits.every((split) => split.cleared);
+    const batch = writeBatch(db);
+    splits
+      .filter((split) => split.cleared !== cleared)
+      .forEach((split) => {
+        batch.update(doc(db, 'ledgerSplits', split.id), {
+          cleared,
+          updatedAt: serverTimestamp(),
+        });
+      });
+    await batch.commit();
+    setNotice(t(cleared ? 'allDebtsCleared' : 'allDebtsRestored'));
   } catch (error) {
     reportError(error);
   }
@@ -2272,13 +2961,20 @@ async function toggleLedgerEntryCleared(entryId) {
 
 function stopActiveListeners() {
   stopLedger?.();
+  stopLedgerSplits?.();
   stopLedgerImages?.();
   stopUsers?.();
   stopLedger = undefined;
+  stopLedgerSplits = undefined;
   stopLedgerImages = undefined;
   stopUsers = undefined;
   ledgerEntries = [];
+  ledgerSplits = [];
+  ledgerEntriesReady = false;
+  ledgerSplitsReady = false;
   ledgerImages = new Map();
+  discardLedgerEditDraft();
+  discardLedgerNewDraft();
   activeUsers = [];
   knownUsers = [];
   managedUsers = [];
@@ -2316,35 +3012,39 @@ function watchActiveData() {
         ...item.data(),
       }))
       .sort((left, right) => createdAtValue(right) - createdAtValue(left));
+    ledgerEntriesReady = true;
+    if (
+      editingLedgerEntryId
+      && !ledgerEntries.some((entry) => entry.id === editingLedgerEntryId)
+    ) {
+      pendingLedgerEntryImages.delete(
+        ledgerEntryImageKey(editingLedgerEntryId),
+      );
+      discardLedgerEditDraft();
+    }
     render();
   }, listenerError('Ledger'));
+
+  stopLedgerSplits = onSnapshot(collection(db, 'ledgerSplits'), (snapshot) => {
+    clearCalculatedSettlements();
+    ledgerSplits = snapshot.docs.map((item) => ({
+      id: item.id,
+      ...item.data(),
+    }));
+    ledgerSplitsReady = true;
+    render();
+  }, listenerError('Ledger debts'));
 
   stopLedgerImages = onSnapshot(collection(db, 'ledgerImages'), (snapshot) => {
     ledgerImages = new Map();
     snapshot.docs.forEach((item) => {
       const data = item.data();
-      let entryId = '';
-      let imageRecord = null;
-
-      if (
-        typeof data.ledgerId === 'string'
-        && data.ledgerId
-        && isValidLedgerImageDataUrl(data.dataUrl)
-      ) {
-        entryId = data.ledgerId;
-        imageRecord = {
-          id: item.id,
-          ...data,
-        };
-      } else if (isValidLedgerImageDataUrl(data.dataUrl)) {
-        entryId = item.id;
-        imageRecord = {
-          id: item.id,
-          ...data,
-        };
-      }
-
-      if (!entryId || !imageRecord) return;
+      const entryId = typeof data.ledgerId === 'string' ? data.ledgerId : '';
+      if (!entryId || !isValidLedgerImageDataUrl(data.dataUrl)) return;
+      const imageRecord = {
+        id: item.id,
+        ...data,
+      };
       if (!ledgerImages.has(entryId)) ledgerImages.set(entryId, []);
       ledgerImages.get(entryId).push(imageRecord);
     });
