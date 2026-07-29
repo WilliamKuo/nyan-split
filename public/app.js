@@ -459,11 +459,16 @@ function brand() {
   </div>`;
 }
 
+function themeToggleLabel() {
+  return document.documentElement.dataset.theme === 'dark'
+    ? t('light')
+    : t('dark');
+}
+
 function preferenceControls() {
-  const themeLabel = document.documentElement.dataset.theme === 'dark' ? t('light') : t('dark');
   return `<div class="preference-controls" aria-label="${escapeHtml(t('displayPreferences'))}">
     <button class="text-button preference-button" type="button" data-action="locale">${escapeHtml(t('language'))}</button>
-    <button class="text-button preference-button" type="button" data-action="theme">${escapeHtml(themeLabel)}</button>
+    <button class="text-button preference-button" type="button" data-action="theme">${escapeHtml(themeToggleLabel())}</button>
   </div>`;
 }
 
@@ -2053,6 +2058,19 @@ function renderAdminLedgerData() {
     </section>`;
 }
 
+function renderHelpGuideItem(labels, messageKey) {
+  const renderedLabels = labels
+    .map((label) => (
+      `<span class="help-control-label">${escapeHtml(label)}</span>`
+    ))
+    .join('');
+
+  return `<li>
+    <span class="help-control-labels">${renderedLabels}</span>
+    <span>${escapeHtml(t(messageKey))}</span>
+  </li>`;
+}
+
 function renderHelpGuideModal() {
   if (!showHelpGuide) return '';
 
@@ -2073,72 +2091,135 @@ function renderHelpGuideModal() {
         <section class="help-guide-section">
           <h4>📌 ${escapeHtml(t('helpSectionNavigation'))}</h4>
           <ul class="help-guide-list">
-            <li>
-              <span class="help-badge badge-click">${escapeHtml(t('badgeClick'))}</span>
-              <span>${escapeHtml(t('helpNavClickItem'))}</span>
-            </li>
-            <li>
-              <span class="help-badge badge-click">${escapeHtml(t('badgeClick'))}</span>
-              <span>${escapeHtml(t('helpNavHelpIcon'))}</span>
-            </li>
-            <li>
-              <span class="help-badge badge-click">${escapeHtml(t('badgeClick'))}</span>
-              <span>${escapeHtml(t('helpNavThemeLang'))}</span>
-            </li>
+            ${renderHelpGuideItem(
+              [
+                `➕ ${t('newEntry')}`,
+                `📖 ${t('accounting')}`,
+                `💱 ${t('conversionSettings')}`,
+              ],
+              'helpNavPrimary',
+            )}
+            ${renderHelpGuideItem(
+              [
+                '🌈🐱',
+                t('shareInstall'),
+              ],
+              'helpNavShare',
+            )}
+            ${renderHelpGuideItem(
+              [
+                `👤 ${t('account')}`,
+                t('language'),
+                themeToggleLabel(),
+              ],
+              'helpNavAccount',
+            )}
+            ${renderHelpGuideItem(
+              [
+                '?',
+              ],
+              'helpNavHelp',
+            )}
           </ul>
         </section>
 
         <section class="help-guide-section">
-          <h4>⌨️ ${escapeHtml(t('helpSectionInput'))}</h4>
+          <h4>🧾 ${escapeHtml(t('helpSectionExpense'))}</h4>
           <ul class="help-guide-list">
-            <li>
-              <span class="help-badge badge-keyin">${escapeHtml(t('badgeKeyin'))}</span>
-              <span>${escapeHtml(t('helpInputTypeFields'))}</span>
-            </li>
-            <li>
-              <span class="help-badge badge-shortcut">${escapeHtml(t('badgeShortcut'))}</span>
-              <span>${escapeHtml(t('helpInputSubmitKey'))}</span>
-            </li>
-            <li>
-              <span class="help-badge badge-shortcut">${escapeHtml(t('badgeShortcut'))}</span>
-              <span>${escapeHtml(t('helpInputEscapeKey'))}</span>
-            </li>
-            <li>
-              <span class="help-badge badge-keyin">${escapeHtml(t('badgeKeyin'))}</span>
-              <span>${escapeHtml(t('helpInputSearchFilter'))}</span>
-            </li>
+            ${renderHelpGuideItem(
+              [
+                t('addDebt'),
+                t('saveEntry'),
+              ],
+              'helpExpenseCreate',
+            )}
+            ${renderHelpGuideItem(
+              [
+                '📷',
+                t('uploadImage'),
+                t('takePhoto'),
+              ],
+              'helpExpenseImages',
+            )}
+            ${renderHelpGuideItem(
+              [
+                t('editEntry'),
+                t('clearEntry'),
+                t('restoreEntry'),
+                t('saveChanges'),
+              ],
+              'helpExpenseClear',
+            )}
+            ${renderHelpGuideItem(
+              [
+                t('clearAllDebts'),
+                t('restoreAllDebts'),
+              ],
+              'helpExpenseClearAll',
+            )}
           </ul>
         </section>
 
         <section class="help-guide-section">
-          <h4>📖 ${escapeHtml(t('helpSectionLedger'))}</h4>
+          <h4>🧮 ${escapeHtml(t('helpSectionBalances'))}</h4>
           <ul class="help-guide-list">
-            <li>
-              <span class="help-badge badge-click">${escapeHtml(t('badgeClick'))}</span>
-              <span>${escapeHtml(t('helpLedgerAddExpense'))}</span>
-            </li>
-            <li>
-              <span class="help-badge badge-click">${escapeHtml(t('badgeClick'))}</span>
-              <span>${escapeHtml(t('helpLedgerReceipts'))}</span>
-            </li>
-            <li>
-              <span class="help-badge badge-click">${escapeHtml(t('badgeClick'))}</span>
-              <span>${escapeHtml(t('helpLedgerClearRestore'))}</span>
-            </li>
+            ${renderHelpGuideItem(
+              [
+                `${t('debtor')} → ${t('creditor')}`,
+              ],
+              'helpBalanceDirection',
+            )}
+            ${renderHelpGuideItem(
+              [
+                t('settlementBalances'),
+              ],
+              'helpBalanceNet',
+            )}
+            ${renderHelpGuideItem(
+              [
+                t('ledgerSearchPlaceholder'),
+                '▶ / ▼',
+                `${t('showLedger')} / ${t('hideLedger')}`,
+              ],
+              'helpBalanceVisibility',
+            )}
+            ${renderHelpGuideItem(
+              [
+                t('calculateSettlements'),
+              ],
+              'helpBalanceSettlement',
+            )}
           </ul>
         </section>
 
         <section class="help-guide-section">
-          <h4>💱 ${escapeHtml(t('helpSectionSettlement'))}</h4>
+          <h4>💱 ${escapeHtml(t('helpSectionCurrency'))}</h4>
           <ul class="help-guide-list">
-            <li>
-              <span class="help-badge badge-auto">${escapeHtml(t('badgeAuto'))}</span>
-              <span>${escapeHtml(t('helpSettlementCalculate'))}</span>
-            </li>
-            <li>
-              <span class="help-badge badge-keyin">${escapeHtml(t('badgeKeyin'))}</span>
-              <span>${escapeHtml(t('helpSettlementCurrency'))}</span>
-            </li>
+            ${renderHelpGuideItem(
+              [
+                t('conversionSettings'),
+              ],
+              'helpCurrencyPage',
+            )}
+            ${renderHelpGuideItem(
+              [
+                t('resultCurrency'),
+              ],
+              'helpCurrencyResult',
+            )}
+            ${renderHelpGuideItem(
+              [
+                '1 USD = 30 TWD',
+              ],
+              'helpCurrencyRate',
+            )}
+            ${renderHelpGuideItem(
+              [
+                '↻',
+                t('save'),
+              ],
+              'helpCurrencyRefresh',
+            )}
           </ul>
         </section>
       </div>

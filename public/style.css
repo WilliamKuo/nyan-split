@@ -2210,40 +2210,27 @@ html[data-theme="light"] .app-nav {
   color: var(--text, rgba(255, 255, 255, 0.85));
 }
 
-.help-badge {
-  display: inline-block;
-  padding: 0.15rem 0.5rem;
+.help-control-labels {
+  display: flex;
+  align-items: flex-start;
+  flex: 0 0 11rem;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.help-control-label {
+  display: inline-flex;
+  max-width: 100%;
+  padding: 0.2rem 0.5rem;
+  color: var(--violet-light, #bfa5ff);
+  background: rgba(155, 135, 245, 0.2);
+  border: 1px solid rgba(155, 135, 245, 0.35);
   border-radius: 0.4rem;
   font-size: 0.72rem;
   font-weight: 700;
   letter-spacing: 0.02em;
-  white-space: nowrap;
-  flex-shrink: 0;
-  margin-top: 0.1rem;
-}
-
-.badge-click {
-  background: rgba(155, 135, 245, 0.2);
-  color: var(--violet-light, #bfa5ff);
-  border: 1px solid rgba(155, 135, 245, 0.35);
-}
-
-.badge-keyin {
-  background: rgba(102, 217, 208, 0.18);
-  color: var(--cyan, #66d9d0);
-  border: 1px solid rgba(102, 217, 208, 0.35);
-}
-
-.badge-shortcut {
-  background: rgba(249, 199, 107, 0.18);
-  color: var(--gold, #f9c76b);
-  border: 1px solid rgba(249, 199, 107, 0.35);
-}
-
-.badge-auto {
-  background: rgba(255, 143, 171, 0.18);
-  color: var(--rose, #ff8fab);
-  border: 1px solid rgba(255, 143, 171, 0.35);
+  line-height: 1.35;
+  overflow-wrap: anywhere;
 }
 
 .modal-footer {
@@ -2252,4 +2239,16 @@ html[data-theme="light"] .app-nav {
   display: flex;
   justify-content: flex-end;
   background: var(--surface-raised, rgba(0, 0, 0, 0.1));
+}
+
+@media (max-width: 500px) {
+  .help-guide-list li {
+    flex-direction: column;
+    gap: 0.35rem;
+  }
+
+  .help-control-labels {
+    flex: 0 1 auto;
+    width: 100%;
+  }
 }
