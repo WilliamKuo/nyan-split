@@ -10,6 +10,7 @@ A Firebase-based shared accounting ledger with administrator approval.
 - **Google-only administrators** – Anonymous and manually created users cannot receive the administrator role
 - **Multi-currency support** – Admins manage allowed currencies; users set personal conversion rates
 - **Receipt attachments** – Add shared photos or receipts to an expense (compressed to JPEG)
+- **Admin ledger backups** – Export and safely add missing ledger records from one ZIP file
 - **Flexible debt clearing** – Clear one debt or every debt in an expense to exclude them from balance calculations
 - **Net balance calculation** – See your personal balance across all currencies
 - **Optimized settlement plan** – Minimizes the number of transfers needed
@@ -66,6 +67,16 @@ New or unconfigured apps allow only TWD, which is also the default currency. In 
 The ledger shows net balances and a settlement plan that minimizes the number of transfers. Only uncleared debts contribute to balances. Mixed-currency expenses are converted using the signed-in user's saved result currency and rate settings.
 
 An active, non-disabled user is available as a payer or owing user in new ledger entries when `ledgerSelectable` is `true`. Setting it to `false` removes the user from those choices without deleting or hiding their existing ledger history. Existing profiles with no `ledgerSelectable` field are treated as selectable, and new registered or manually created profiles explicitly default it to `true`.
+
+## Ledger backup and restore
+
+Administrators can open Account and use **Export and import ledger data** to download one ZIP containing every expense, debt, and receipt image. Export reads the latest server data rather than relying on the browser cache. The backup preserves Firestore document IDs, creators, and timestamps.
+
+Import validates the complete archive before writing, then adds only missing documents. Existing document IDs are skipped and never overwritten. If an existing expense ID points to different expense data, import stops before making changes so its debts and images cannot be mixed with the backup. If a connection fails partway through, importing the same ZIP again safely resumes the remaining records.
+
+To protect browser memory, import rejects ZIP files larger than 64 MiB, uncompressed backup data larger than 128 MiB, archives containing extra entries, and backups containing more than 100,000 records.
+
+Backups do not contain user accounts, Firebase Authentication identities, app settings, or personal currency rates. Every referenced active or removed user profile must already exist, and every expense currency must already be in **Allowed currencies**. Deploy the matching `firestore.rules` changes with the app; the restore path needs those narrowly scoped administrator permissions to preserve historical creators and timestamps.
 
 ## Firestore data model
 

@@ -11,18 +11,23 @@ import {
   collection,
   deleteDoc,
   doc,
+  getDocFromServer,
   getDocs,
+  getDocsFromServer,
   getFirestore,
   onSnapshot,
   query,
+  runTransaction,
   serverTimestamp,
   setDoc,
+  Timestamp,
   updateDoc,
   where,
   writeBatch,
 } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js';
 import { firebaseConfig } from './firebase-config.js';
 import { getLocale, t, toggleLocale } from './i18n.js';
+import JSZip from './vendor/jszip.mjs';
 import QRCode from './vendor/qrcode.mjs';
 
 const app = initializeApp(firebaseConfig);
@@ -43,6 +48,49 @@ const BATCH_DELETE_LIMIT = 400;
 const MAX_LEDGER_SPLITS = 12;
 const NEW_LEDGER_ENTRY_IMAGE_KEY = 'new-entry';
 const GOOGLE_PROVIDER_ID = 'google.com';
+const BACKUP_FORMAT = 'nyan-split-ledger-backup';
+const BACKUP_VERSION = 2;
+const BACKUP_SUPPORTED_VERSIONS = [
+  1,
+  BACKUP_VERSION,
+];
+const BACKUP_ENTRY_NAME = 'nyan-split-ledger-backup.json';
+const BACKUP_ZIP_STORE_MAGIC = '\x00\x00';
+const BACKUP_ZIP_DEFLATE_MAGIC = '\x08\x00';
+const BACKUP_MAX_ARCHIVE_BYTES = 64 * 1024 * 1024;
+const BACKUP_MAX_JSON_BYTES = 128 * 1024 * 1024;
+const BACKUP_MAX_RECORDS = 100000;
+const BACKUP_MAX_DOCUMENTS_PER_TRANSACTION = 4;
+const BACKUP_MAX_TRANSACTION_BYTES = 7 * 1024 * 1024;
+const BACKUP_MAX_DOCUMENT_ID_BYTES = 1500;
+const BACKUP_MIN_TIMESTAMP_SECONDS = -62135596800;
+const BACKUP_MAX_TIMESTAMP_SECONDS = 253402300799;
+const BACKUP_MIN_TIMESTAMP_MILLIS = -62135596800000;
+const BACKUP_MAX_TIMESTAMP_MILLIS = 253402300799999;
+const BACKUP_IMAGE_MAX_CHARACTERS = 700000;
+const BACKUP_COLLECTIONS = [
+  'ledger',
+  'ledgerSplits',
+  'ledgerImages',
+];
+const BACKUP_TIMESTAMP_FIELDS = {
+  ledger: [
+    'createdAt',
+    'updatedAt',
+  ],
+  ledgerImages: [
+    'createdAt',
+  ],
+  ledgerSplits: [
+    'createdAt',
+    'updatedAt',
+  ],
+};
+const BACKUP_COLLECTION_LABEL_KEYS = {
+  ledger: 'backupExpensesLabel',
+  ledgerImages: 'backupImagesLabel',
+  ledgerSplits: 'backupDebtsLabel',
+};
 const JPEG_QUALITIES = [
   .78,
   .68,
@@ -111,6 +159,9 @@ let seedingCurrencyRates = false;
 let initialCurrencyRatesSeeded = false;
 let appVersion = '';
 let showHelpGuide = false;
+let backupStatus = '';
+let backupStatusType = 'info';
+let isBackupBusy = false;
 
 let stopProfile;
 let stopSettings;
@@ -1848,6 +1899,7 @@ function renderAccount() {
   const isAdmin = currentUserIsAdmin();
   const adminContent = isAdmin ? `
     ${renderAdminUsers()}
+    ${renderAdminBackup()}
     ${renderAdminLedgerData()}
     ${renderAdminCurrencySettings(currentAdminCurrencySettings())}
   ` : '';
@@ -2041,6 +2093,42 @@ function renderAdminUsers() {
     </section>`;
 }
 
+function renderAdminBackup() {
+  const controlsDisabled = isBackupBusy || isClearingLedgerData;
+  return `<section class="accounting-card admin-backup-card">
+      <div class="card-heading">
+        <div>
+          <h3>${escapeHtml(t('backupData'))}</h3>
+          <p>${escapeHtml(t('backupDataHelp'))}</p>
+        </div>
+      </div>
+      <div class="admin-backup-actions">
+        <button
+          type="button"
+          data-action="export-backup"
+          ${controlsDisabled ? 'disabled' : ''}
+        >${escapeHtml(t('exportBackup'))}</button>
+        <input
+          id="import-backup-input"
+          type="file"
+          accept=".zip,application/zip"
+          hidden
+        />
+        <button
+          class="secondary-button"
+          type="button"
+          data-action="import-backup"
+          ${controlsDisabled ? 'disabled' : ''}
+        >${escapeHtml(t('importBackup'))}</button>
+      </div>
+      <p
+        class="backup-status${backupStatusType === 'error' ? ' backup-status-error' : ''}"
+        role="${backupStatusType === 'error' ? 'alert' : 'status'}"
+        aria-live="polite"
+      >${escapeHtml(backupStatus)}</p>
+    </section>`;
+}
+
 function renderAdminLedgerData() {
   return `<section class="accounting-card">
       <div class="card-heading">
@@ -2053,7 +2141,7 @@ function renderAdminLedgerData() {
         class="secondary-button danger-text"
         type="button"
         data-action="clear-all-ledger-data"
-        ${isClearingLedgerData ? 'disabled' : ''}
+        ${isClearingLedgerData || isBackupBusy ? 'disabled' : ''}
       >${escapeHtml(t(isClearingLedgerData ? 'clearingLedgerData' : 'clearAllLedgerData'))}</button>
     </section>`;
 }
@@ -2534,6 +2622,18 @@ function bind() {
   });
   document.querySelectorAll('[data-remove-user]').forEach((button) => {
     button.onclick = () => removeUser(button.dataset.removeUser);
+  });
+  document.querySelector('[data-action="export-backup"]')?.addEventListener(
+    'click',
+    exportLedgerBackup,
+  );
+  document.querySelector('[data-action="import-backup"]')?.addEventListener('click', () => {
+    document.querySelector('#import-backup-input')?.click();
+  });
+  document.querySelector('#import-backup-input')?.addEventListener('change', (event) => {
+    const file = event.currentTarget.files?.[0];
+    event.currentTarget.value = '';
+    if (file) void importLedgerBackup(file);
   });
   document.querySelector('[data-action="clear-all-ledger-data"]')?.addEventListener(
     'click',
@@ -3333,6 +3433,927 @@ async function removeUser(userId) {
   }
 }
 
+function backupCollectionLabel(collectionName) {
+  const labelKey = BACKUP_COLLECTION_LABEL_KEYS[collectionName];
+  return labelKey ? t(labelKey) : collectionName;
+}
+
+function backupContentsDescription(collections) {
+  return t('backupContents', {
+    debts: collections.ledgerSplits.length,
+    entries: collections.ledger.length,
+    images: collections.ledgerImages.length,
+  });
+}
+
+function backupByteLimitLabel(byteLength) {
+  return `${byteLength / (1024 * 1024)} MiB`;
+}
+
+function isValidBackupTimestampParts(value) {
+  return isPlainObject(value)
+    && Number.isSafeInteger(value.seconds)
+    && value.seconds >= BACKUP_MIN_TIMESTAMP_SECONDS
+    && value.seconds <= BACKUP_MAX_TIMESTAMP_SECONDS
+    && Number.isInteger(value.nanoseconds)
+    && value.nanoseconds >= 0
+    && value.nanoseconds <= 999999999;
+}
+
+function serializeBackupTimestamp(value) {
+  return isValidBackupTimestampParts(value)
+    ? {
+      nanoseconds: value.nanoseconds,
+      seconds: value.seconds,
+    }
+    : null;
+}
+
+function backupTimestampsEqual(left, right) {
+  return isValidBackupTimestampParts(left)
+    && isValidBackupTimestampParts(right)
+    && left.seconds === right.seconds
+    && left.nanoseconds === right.nanoseconds;
+}
+
+function serializeBackupDocument(collectionName, snapshot) {
+  const data = snapshot.data();
+  const record = {
+    id: snapshot.id,
+  };
+  Object.entries(data).forEach(([field, value]) => {
+    if (field !== 'id') record[field] = value;
+  });
+  BACKUP_TIMESTAMP_FIELDS[collectionName].forEach((field) => {
+    record[field] = serializeBackupTimestamp(data[field]);
+  });
+  return record;
+}
+
+async function readBackupCollection(collectionName) {
+  const snapshot = await getDocsFromServer(collection(db, collectionName));
+  return snapshot.docs.map((item) => (
+    serializeBackupDocument(collectionName, item)
+  ));
+}
+
+function downloadBackupBlob(blob) {
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `nyan-split-ledger-backup-${timestamp}.zip`;
+  link.hidden = true;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+async function exportLedgerBackup() {
+  if (
+    !currentUserIsAdmin()
+    || isBackupBusy
+    || isClearingLedgerData
+  ) {
+    return;
+  }
+
+  isBackupBusy = true;
+  backupStatus = t('backupReading');
+  backupStatusType = 'info';
+  render();
+
+  try {
+    const collectionEntries = await Promise.all(
+      BACKUP_COLLECTIONS.map(async (collectionName) => [
+        collectionName,
+        await readBackupCollection(collectionName),
+      ]),
+    );
+    const collections = Object.fromEntries(collectionEntries);
+    validateBackupRecordCount(collections);
+    backupStatus = t('backupCreatingArchive');
+    render();
+
+    const backupBytes = new TextEncoder().encode(JSON.stringify({
+      collections,
+      exportedAt: new Date().toISOString(),
+      format: BACKUP_FORMAT,
+      version: BACKUP_VERSION,
+    }, null, 2));
+    if (backupBytes.byteLength > BACKUP_MAX_JSON_BYTES) {
+      throw backupValidationError('backupDataTooLarge', {
+        max: backupByteLimitLabel(BACKUP_MAX_JSON_BYTES),
+      });
+    }
+
+    const archive = new JSZip();
+    archive.file(BACKUP_ENTRY_NAME, backupBytes);
+    const zip = await archive.generateAsync({
+      compression: 'DEFLATE',
+      compressionOptions: {
+        level: 6,
+      },
+      type: 'blob',
+    });
+    if (zip.size > BACKUP_MAX_ARCHIVE_BYTES) {
+      throw backupValidationError('backupArchiveTooLarge', {
+        max: backupByteLimitLabel(BACKUP_MAX_ARCHIVE_BYTES),
+      });
+    }
+    downloadBackupBlob(zip);
+    backupStatus = t('backupExportComplete', {
+      contents: backupContentsDescription(collections),
+    });
+  } catch (error) {
+    console.error(error);
+    backupStatus = error?.name === 'BackupValidationError'
+      ? error.message
+      : error?.code === 'unavailable'
+        ? t('backupOffline')
+        : t('backupExportFailed');
+    backupStatusType = 'error';
+  } finally {
+    isBackupBusy = false;
+    render();
+  }
+}
+
+function isPlainObject(value) {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function backupValidationError(key, values = {}) {
+  const error = new Error(t(key, values));
+  error.name = 'BackupValidationError';
+  return error;
+}
+
+function validateBackupRecordCount(collections) {
+  const recordCount = BACKUP_COLLECTIONS.reduce(
+    (total, collectionName) => (
+      total + (
+        Array.isArray(collections[collectionName])
+          ? collections[collectionName].length
+          : 0
+      )
+    ),
+    0,
+  );
+  if (recordCount > BACKUP_MAX_RECORDS) {
+    throw backupValidationError('backupTooManyRecords', {
+      max: BACKUP_MAX_RECORDS,
+    });
+  }
+}
+
+function invalidBackupRecord(collectionName, id, field) {
+  throw backupValidationError('backupInvalidRecord', {
+    collection: backupCollectionLabel(collectionName),
+    field,
+    id: id || '?',
+  });
+}
+
+function validateBackupId(record, collectionName, knownIds) {
+  if (!isPlainObject(record)) {
+    invalidBackupRecord(collectionName, '?', 'record');
+  }
+
+  const id = record.id;
+  if (
+    typeof id !== 'string'
+    || !id
+    || id.includes('/')
+    || id === '.'
+    || id === '..'
+    || /^__.*__$/.test(id)
+    || new TextEncoder().encode(id).byteLength > BACKUP_MAX_DOCUMENT_ID_BYTES
+  ) {
+    invalidBackupRecord(collectionName, '?', 'id');
+  }
+  if (knownIds.has(id)) {
+    throw backupValidationError('backupDuplicateRecord', {
+      collection: backupCollectionLabel(collectionName),
+      id,
+    });
+  }
+  knownIds.add(id);
+  return id;
+}
+
+function requireBackupString(
+  record,
+  field,
+  collectionName,
+  id,
+  allowEmpty = false,
+) {
+  const value = record[field];
+  if (
+    typeof value !== 'string'
+    || (!allowEmpty && !value)
+  ) {
+    invalidBackupRecord(collectionName, id, field);
+  }
+  return value;
+}
+
+function restoreLegacyBackupTimestamp(milliseconds) {
+  let seconds = Math.floor(milliseconds / 1000);
+  let nanoseconds = Math.round(
+    ((milliseconds - (seconds * 1000)) * 1000000) / 1000,
+  ) * 1000;
+  if (nanoseconds === 1000000000) {
+    seconds += 1;
+    nanoseconds = 0;
+  }
+  return new Timestamp(seconds, nanoseconds);
+}
+
+function restoreBackupTimestamp(value, field, collectionName, id) {
+  if (isValidBackupTimestampParts(value)) {
+    return new Timestamp(value.seconds, value.nanoseconds);
+  }
+  if (
+    typeof value === 'number'
+    && Number.isFinite(value)
+    && value >= BACKUP_MIN_TIMESTAMP_MILLIS
+    && value <= BACKUP_MAX_TIMESTAMP_MILLIS
+  ) {
+    return restoreLegacyBackupTimestamp(value);
+  }
+  invalidBackupRecord(collectionName, id, field);
+}
+
+function requireBackupUser(userId, validUserIds) {
+  if (!validUserIds.has(userId)) {
+    throw backupValidationError('backupMissingUser', {
+      userId,
+    });
+  }
+}
+
+function backupRecordBytes(record) {
+  return new TextEncoder().encode(JSON.stringify(record)).byteLength;
+}
+
+function normalizeBackupLedgerRecord(
+  record,
+  knownIds,
+  validUserIds,
+  allowedCurrencies,
+) {
+  const collectionName = 'ledger';
+  const id = validateBackupId(record, collectionName, knownIds);
+  const creditorId = requireBackupString(
+    record,
+    'creditorId',
+    collectionName,
+    id,
+  );
+  const createdBy = requireBackupString(
+    record,
+    'createdBy',
+    collectionName,
+    id,
+  );
+  const rawCurrency = requireBackupString(
+    record,
+    'currency',
+    collectionName,
+    id,
+  );
+  const currency = normalizeCurrency(rawCurrency);
+  const note = requireBackupString(
+    record,
+    'note',
+    collectionName,
+    id,
+    true,
+  );
+  if (note.length > 160) {
+    invalidBackupRecord(collectionName, id, 'note');
+  }
+  if (rawCurrency !== currency) {
+    invalidBackupRecord(collectionName, id, 'currency');
+  }
+  if (!allowedCurrencies.has(currency)) {
+    throw backupValidationError('backupCurrencyUnavailable', {
+      currency,
+    });
+  }
+  requireBackupUser(creditorId, validUserIds);
+  requireBackupUser(createdBy, validUserIds);
+
+  return {
+    data: {
+      creditorId,
+      createdAt: restoreBackupTimestamp(
+        record.createdAt,
+        'createdAt',
+        collectionName,
+        id,
+      ),
+      createdBy,
+      currency,
+      note,
+      updatedAt: restoreBackupTimestamp(
+        record.updatedAt,
+        'updatedAt',
+        collectionName,
+        id,
+      ),
+    },
+    estimatedBytes: backupRecordBytes(record),
+    id,
+  };
+}
+
+function normalizeBackupSplitRecord(
+  record,
+  knownIds,
+  validUserIds,
+  ledgerById,
+) {
+  const collectionName = 'ledgerSplits';
+  const id = validateBackupId(record, collectionName, knownIds);
+  const ledgerId = requireBackupString(
+    record,
+    'ledgerId',
+    collectionName,
+    id,
+  );
+  const debtorId = requireBackupString(
+    record,
+    'debtorId',
+    collectionName,
+    id,
+  );
+  const ledger = ledgerById.get(ledgerId);
+  if (!ledger || id !== `${ledgerId}_${debtorId}`) {
+    invalidBackupRecord(collectionName, id, 'ledgerId');
+  }
+  if (
+    debtorId === ledger.data.creditorId
+    || typeof record.amount !== 'number'
+    || !Number.isFinite(record.amount)
+    || record.amount <= 0
+    || typeof record.cleared !== 'boolean'
+    || !Number.isInteger(record.position)
+    || record.position < 0
+  ) {
+    invalidBackupRecord(collectionName, id, 'values');
+  }
+  requireBackupUser(debtorId, validUserIds);
+
+  return {
+    data: {
+      amount: record.amount,
+      cleared: record.cleared,
+      createdAt: restoreBackupTimestamp(
+        record.createdAt,
+        'createdAt',
+        collectionName,
+        id,
+      ),
+      debtorId,
+      ledgerId,
+      position: record.position,
+      updatedAt: restoreBackupTimestamp(
+        record.updatedAt,
+        'updatedAt',
+        collectionName,
+        id,
+      ),
+    },
+    estimatedBytes: backupRecordBytes(record),
+    id,
+  };
+}
+
+function normalizeBackupImageRecord(
+  record,
+  knownIds,
+  validUserIds,
+  ledgerById,
+) {
+  const collectionName = 'ledgerImages';
+  const id = validateBackupId(record, collectionName, knownIds);
+  const ledgerId = requireBackupString(
+    record,
+    'ledgerId',
+    collectionName,
+    id,
+  );
+  const createdBy = requireBackupString(
+    record,
+    'createdBy',
+    collectionName,
+    id,
+  );
+  const dataUrl = requireBackupString(
+    record,
+    'dataUrl',
+    collectionName,
+    id,
+  );
+  if (!ledgerById.has(ledgerId)) {
+    invalidBackupRecord(collectionName, id, 'ledgerId');
+  }
+  if (
+    !isValidLedgerImageDataUrl(dataUrl)
+    || dataUrl.length > BACKUP_IMAGE_MAX_CHARACTERS
+  ) {
+    invalidBackupRecord(collectionName, id, 'dataUrl');
+  }
+  requireBackupUser(createdBy, validUserIds);
+
+  return {
+    data: {
+      createdAt: restoreBackupTimestamp(
+        record.createdAt,
+        'createdAt',
+        collectionName,
+        id,
+      ),
+      createdBy,
+      dataUrl,
+      ledgerId,
+    },
+    estimatedBytes: backupRecordBytes(record),
+    id,
+  };
+}
+
+function normalizeLedgerBackup(
+  payload,
+  validUserIds,
+  allowedCurrencies,
+) {
+  if (
+    !isPlainObject(payload)
+    || payload.format !== BACKUP_FORMAT
+    || !BACKUP_SUPPORTED_VERSIONS.includes(payload.version)
+    || !isPlainObject(payload.collections)
+  ) {
+    throw backupValidationError('backupInvalidArchive');
+  }
+
+  BACKUP_COLLECTIONS.forEach((collectionName) => {
+    if (!Array.isArray(payload.collections[collectionName])) {
+      throw backupValidationError('backupMissingCollection', {
+        collection: backupCollectionLabel(collectionName),
+      });
+    }
+  });
+  validateBackupRecordCount(payload.collections);
+
+  const ledgerIds = new Set();
+  const ledger = payload.collections.ledger.map((record) => (
+    normalizeBackupLedgerRecord(
+      record,
+      ledgerIds,
+      validUserIds,
+      allowedCurrencies,
+    )
+  ));
+  const ledgerById = new Map(
+    ledger.map((record) => [
+      record.id,
+      record,
+    ]),
+  );
+  const splitIds = new Set();
+  const ledgerSplits = payload.collections.ledgerSplits.map((record) => (
+    normalizeBackupSplitRecord(
+      record,
+      splitIds,
+      validUserIds,
+      ledgerById,
+    )
+  ));
+  const splitCounts = new Map();
+  ledgerSplits.forEach((record) => {
+    const count = (splitCounts.get(record.data.ledgerId) || 0) + 1;
+    if (count > MAX_LEDGER_SPLITS) {
+      throw backupValidationError('backupTooManyDebts', {
+        ledgerId: record.data.ledgerId,
+        max: MAX_LEDGER_SPLITS,
+      });
+    }
+    splitCounts.set(record.data.ledgerId, count);
+  });
+  const imageIds = new Set();
+  const ledgerImages = payload.collections.ledgerImages.map((record) => (
+    normalizeBackupImageRecord(
+      record,
+      imageIds,
+      validUserIds,
+      ledgerById,
+    )
+  ));
+
+  return {
+    ledger,
+    ledgerImages,
+    ledgerSplits,
+  };
+}
+
+function backupZipEntrySize(entry, field) {
+  const value = entry?._data?.[field];
+  return Number.isSafeInteger(value) && value >= 0 ? value : null;
+}
+
+function backupZipEntryStream(entry) {
+  const compressedContent = entry?._data?.compressedContent;
+  const compressedByteLength = backupZipEntrySize(entry, 'compressedSize');
+  const compressionMagic = entry?._data?.compression?.magic;
+  if (
+    !(compressedContent instanceof Uint8Array)
+    || compressedByteLength === null
+    || compressedContent.byteLength !== compressedByteLength
+  ) {
+    throw backupValidationError('backupInvalidArchive');
+  }
+  if (
+    typeof Blob !== 'function'
+    || typeof Blob.prototype.stream !== 'function'
+  ) {
+    throw backupValidationError('backupDecompressionUnsupported');
+  }
+
+  const compressedStream = new Blob([compressedContent]).stream();
+  if (compressionMagic === BACKUP_ZIP_STORE_MAGIC) {
+    return compressedStream;
+  }
+  if (compressionMagic !== BACKUP_ZIP_DEFLATE_MAGIC) {
+    throw backupValidationError('backupInvalidArchive');
+  }
+  if (typeof DecompressionStream !== 'function') {
+    throw backupValidationError('backupDecompressionUnsupported');
+  }
+
+  try {
+    return compressedStream.pipeThrough(
+      new DecompressionStream('deflate-raw'),
+    );
+  } catch {
+    throw backupValidationError('backupDecompressionUnsupported');
+  }
+}
+
+async function readBackupZipEntryText(entry, expectedByteLength) {
+  const decoder = new TextDecoder('utf-8', {
+    fatal: true,
+  });
+  const textChunks = [];
+  const reader = backupZipEntryStream(entry).getReader();
+  let byteLength = 0;
+
+  try {
+    while (true) {
+      const {
+        done,
+        value,
+      } = await reader.read();
+      if (done) break;
+
+      byteLength += value.byteLength;
+      if (byteLength > BACKUP_MAX_JSON_BYTES) {
+        throw backupValidationError('backupDataTooLarge', {
+          max: backupByteLimitLabel(BACKUP_MAX_JSON_BYTES),
+        });
+      }
+      try {
+        textChunks.push(decoder.decode(value, {
+          stream: true,
+        }));
+      } catch {
+        throw backupValidationError('backupInvalidJson');
+      }
+    }
+
+    if (byteLength !== expectedByteLength) {
+      throw backupValidationError('backupInvalidArchive');
+    }
+    try {
+      textChunks.push(decoder.decode());
+    } catch {
+      throw backupValidationError('backupInvalidJson');
+    }
+    return textChunks.join('');
+  } catch (error) {
+    try {
+      await reader.cancel(error);
+    } catch {
+      // Preserve the original validation or decompression error.
+    }
+    if (error?.name === 'BackupValidationError') throw error;
+    throw backupValidationError('backupInvalidArchive');
+  } finally {
+    try {
+      reader.releaseLock();
+    } catch {
+      // A failed stream can release its lock during cancellation.
+    }
+  }
+}
+
+async function loadLedgerBackupPayload(file) {
+  if (
+    !file
+    || !Number.isSafeInteger(file.size)
+    || file.size <= 0
+  ) {
+    throw backupValidationError('backupInvalidArchive');
+  }
+  if (file.size > BACKUP_MAX_ARCHIVE_BYTES) {
+    throw backupValidationError('backupArchiveTooLarge', {
+      max: backupByteLimitLabel(BACKUP_MAX_ARCHIVE_BYTES),
+    });
+  }
+
+  let archive;
+  try {
+    archive = await JSZip.loadAsync(file);
+  } catch {
+    throw backupValidationError('backupInvalidArchive');
+  }
+  const backupFile = archive.file(BACKUP_ENTRY_NAME);
+  const archiveEntries = Object.values(archive.files);
+  if (
+    archiveEntries.length !== 1
+    || !backupFile
+    || Array.isArray(backupFile)
+    || backupFile.dir
+    || archiveEntries[0].name !== BACKUP_ENTRY_NAME
+  ) {
+    throw backupValidationError('backupInvalidArchive');
+  }
+
+  const compressedByteLength = backupZipEntrySize(
+    backupFile,
+    'compressedSize',
+  );
+  const uncompressedByteLength = backupZipEntrySize(
+    backupFile,
+    'uncompressedSize',
+  );
+  if (
+    compressedByteLength === null
+    || uncompressedByteLength === null
+    || compressedByteLength > file.size
+  ) {
+    throw backupValidationError('backupInvalidArchive');
+  }
+  if (compressedByteLength > BACKUP_MAX_ARCHIVE_BYTES) {
+    throw backupValidationError('backupArchiveTooLarge', {
+      max: backupByteLimitLabel(BACKUP_MAX_ARCHIVE_BYTES),
+    });
+  }
+  if (uncompressedByteLength > BACKUP_MAX_JSON_BYTES) {
+    throw backupValidationError('backupDataTooLarge', {
+      max: backupByteLimitLabel(BACKUP_MAX_JSON_BYTES),
+    });
+  }
+
+  let backupText;
+  try {
+    backupText = await readBackupZipEntryText(
+      backupFile,
+      uncompressedByteLength,
+    );
+  } catch (error) {
+    if (error?.name === 'BackupValidationError') throw error;
+    throw backupValidationError('backupInvalidArchive');
+  }
+  try {
+    return JSON.parse(backupText);
+  } catch {
+    throw backupValidationError('backupInvalidJson');
+  }
+}
+
+async function readBackupImportContext() {
+  const [
+    ledgerSnapshot,
+    settingsSnapshot,
+    usersSnapshot,
+  ] = await Promise.all([
+    getDocsFromServer(collection(db, 'ledger')),
+    getDocFromServer(settingsReference),
+    getDocsFromServer(collection(db, 'users')),
+  ]);
+  const settingsData = settingsSnapshot.exists()
+    ? settingsSnapshot.data()
+    : null;
+  const hasCurrencyAllowlist = Boolean(
+    settingsData
+    && Object.prototype.hasOwnProperty.call(
+      settingsData,
+      'allowedCurrencies',
+    ),
+  );
+  const configuredCurrencies = hasCurrencyAllowlist
+    ? Array.isArray(settingsData.allowedCurrencies)
+      ? settingsData.allowedCurrencies.filter((currency) => (
+        currency === normalizeCurrency(currency)
+      ))
+      : []
+    : [...DEFAULT_ALLOWED_CURRENCIES];
+
+  return {
+    allowedCurrencies: new Set(configuredCurrencies),
+    existingLedger: new Map(
+      ledgerSnapshot.docs.map((item) => [
+        item.id,
+        item.data(),
+      ]),
+    ),
+    validUserIds: new Set(
+      usersSnapshot.docs
+        .filter((item) => LEDGER_USER_STATUSES.includes(item.data().status))
+        .map((item) => item.id),
+    ),
+  };
+}
+
+function existingLedgerMatchesBackup(existing, backupRecord) {
+  const backup = backupRecord.data;
+  return existing.creditorId === backup.creditorId
+    && existing.createdBy === backup.createdBy
+    && existing.currency === backup.currency
+    && existing.note === backup.note
+    && backupTimestampsEqual(existing.createdAt, backup.createdAt)
+    && backupTimestampsEqual(existing.updatedAt, backup.updatedAt);
+}
+
+function validateExistingBackupLedgers(records, existingLedger) {
+  records.forEach((record) => {
+    const existing = existingLedger.get(record.id);
+    if (existing && !existingLedgerMatchesBackup(existing, record)) {
+      throw backupValidationError('backupExistingExpenseConflict', {
+        id: record.id,
+      });
+    }
+  });
+}
+
+function chunkBackupRecords(records) {
+  const chunks = [];
+  let currentChunk = [];
+  let currentBytes = 0;
+
+  records.forEach((record) => {
+    if (record.estimatedBytes > BACKUP_MAX_TRANSACTION_BYTES) {
+      throw backupValidationError('backupRecordTooLarge', {
+        id: record.id,
+      });
+    }
+    const exceedsDocumentLimit = (
+      currentChunk.length >= BACKUP_MAX_DOCUMENTS_PER_TRANSACTION
+    );
+    const exceedsByteLimit = (
+      currentChunk.length > 0
+      && currentBytes + record.estimatedBytes > BACKUP_MAX_TRANSACTION_BYTES
+    );
+    if (exceedsDocumentLimit || exceedsByteLimit) {
+      chunks.push(currentChunk);
+      currentChunk = [];
+      currentBytes = 0;
+    }
+    currentChunk.push(record);
+    currentBytes += record.estimatedBytes;
+  });
+
+  if (currentChunk.length) chunks.push(currentChunk);
+  return chunks;
+}
+
+async function importBackupChunk(collectionName, records) {
+  return runTransaction(db, async (transaction) => {
+    const references = records.map((record) => (
+      doc(db, collectionName, record.id)
+    ));
+    const snapshots = await Promise.all(
+      references.map((reference) => transaction.get(reference)),
+    );
+    let added = 0;
+    snapshots.forEach((snapshot, index) => {
+      if (snapshot.exists()) {
+        if (
+          collectionName === 'ledger'
+          && !existingLedgerMatchesBackup(snapshot.data(), records[index])
+        ) {
+          throw backupValidationError('backupExistingExpenseConflict', {
+            id: records[index].id,
+          });
+        }
+        return;
+      }
+      transaction.set(references[index], records[index].data);
+      added += 1;
+    });
+    return {
+      added,
+      skipped: records.length - added,
+    };
+  });
+}
+
+async function importLedgerBackup(file) {
+  if (
+    !currentUserIsAdmin()
+    || isBackupBusy
+    || isClearingLedgerData
+  ) {
+    return;
+  }
+
+  let addedCount = 0;
+  let skippedCount = 0;
+  isBackupBusy = true;
+  backupStatus = t('backupChecking');
+  backupStatusType = 'info';
+  render();
+
+  try {
+    const payload = await loadLedgerBackupPayload(file);
+    const importContext = await readBackupImportContext();
+    const collections = normalizeLedgerBackup(
+      payload,
+      importContext.validUserIds,
+      importContext.allowedCurrencies,
+    );
+    validateExistingBackupLedgers(
+      collections.ledger,
+      importContext.existingLedger,
+    );
+    const totalCount = BACKUP_COLLECTIONS.reduce(
+      (total, collectionName) => total + collections[collectionName].length,
+      0,
+    );
+    if (!totalCount) {
+      backupStatus = t('backupImportEmpty');
+      return;
+    }
+
+    const contents = backupContentsDescription(collections);
+    if (!window.confirm(t('backupImportConfirm', { contents }))) {
+      backupStatus = '';
+      return;
+    }
+
+    const chunksByCollection = Object.fromEntries(
+      BACKUP_COLLECTIONS.map((collectionName) => [
+        collectionName,
+        chunkBackupRecords(collections[collectionName]),
+      ]),
+    );
+    let completedCount = 0;
+
+    for (const collectionName of BACKUP_COLLECTIONS) {
+      for (const chunk of chunksByCollection[collectionName]) {
+        backupStatus = t('backupImportingProgress', {
+          completed: completedCount,
+          total: totalCount,
+        });
+        render();
+        const result = await importBackupChunk(collectionName, chunk);
+        addedCount += result.added;
+        skippedCount += result.skipped;
+        completedCount += chunk.length;
+      }
+    }
+
+    backupStatus = t('backupImportComplete', {
+      added: addedCount,
+      skipped: skippedCount,
+    });
+  } catch (error) {
+    console.error(error);
+    const detail = error.name === 'BackupValidationError'
+      ? error.message
+      : error.code === 'unavailable'
+        ? t('backupOffline')
+        : t('backupImportFailed');
+    backupStatus = addedCount || skippedCount
+      ? t('backupImportFailedAfterProgress', {
+        added: addedCount,
+        detail,
+        skipped: skippedCount,
+      })
+      : detail;
+    backupStatusType = 'error';
+  } finally {
+    isBackupBusy = false;
+    render();
+  }
+}
+
 async function deleteCollectionDocuments(collectionName) {
   const snapshot = await getDocs(collection(db, collectionName));
 
@@ -3348,7 +4369,13 @@ async function deleteCollectionDocuments(collectionName) {
 }
 
 async function clearAllLedgerData() {
-  if (!currentUserIsAdmin() || isClearingLedgerData) return;
+  if (
+    !currentUserIsAdmin()
+    || isClearingLedgerData
+    || isBackupBusy
+  ) {
+    return;
+  }
   if (!window.confirm(t('clearAllLedgerDataConfirm'))) return;
   if (!window.confirm(t('clearAllLedgerDataFinalConfirm'))) return;
 
@@ -3616,6 +4643,9 @@ onAuthStateChanged(auth, (user) => {
   initialCurrencyRatesSeeded = false;
   pendingLedgerImageFocus = null;
   pendingLedgerEntryImages.clear();
+  backupStatus = '';
+  backupStatusType = 'info';
+  isBackupBusy = false;
 
   if (!user) {
     render();

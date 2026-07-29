@@ -155,6 +155,17 @@ service cloud.firestore {
     function visibleLedgerUser(data) {
       return data.status == 'active' || data.status == 'removed';
     }
+    function historicalLedgerUser(userId) {
+      return userId is string
+        && exists(
+          /databases/$(database)/documents/users/$(userId)
+        )
+        && visibleLedgerUser(
+          get(
+            /databases/$(database)/documents/users/$(userId)
+          ).data
+        );
+    }
     function retainedLedgerUser(userId, existingUserId) {
       let ledgerUser = get(
         /databases/$(database)/documents/users/$(userId)
@@ -182,14 +193,25 @@ service cloud.firestore {
     }
     function validLedgerHeaderCreate(data) {
       return validLedgerHeaderKeys(data)
-        && data.createdBy == request.auth.uid
         && data.creditorId is string
-        && selectableLedgerUser(data.creditorId)
         && allowedCurrency(data.currency)
         && data.note is string
         && data.note.size() <= 160
-        && data.createdAt == request.time
-        && data.updatedAt == request.time;
+        && (
+          (
+            data.createdBy == request.auth.uid
+            && selectableLedgerUser(data.creditorId)
+            && data.createdAt == request.time
+            && data.updatedAt == request.time
+          )
+          || (
+            admin()
+            && historicalLedgerUser(data.createdBy)
+            && historicalLedgerUser(data.creditorId)
+            && data.createdAt is timestamp
+            && data.updatedAt is timestamp
+          )
+        );
     }
     function validLedgerHeaderUpdate(data, existingData) {
       return validLedgerHeaderKeys(data)
@@ -350,17 +372,32 @@ service cloud.firestore {
           + '_'
           + request.resource.data.debtorId
         && ledgerManagedAfter(request.resource.data.ledgerId)
-        && selectableLedgerUser(request.resource.data.debtorId)
-        && selectableLedgerUser(
-          getAfter(
-            /databases/$(database)/documents/ledger/$(request.resource.data.ledgerId)
-          ).data.creditorId
-        )
         && request.resource.data.debtorId != getAfter(
           /databases/$(database)/documents/ledger/$(request.resource.data.ledgerId)
         ).data.creditorId
-        && request.resource.data.createdAt == request.time
-        && request.resource.data.updatedAt == request.time;
+        && (
+          (
+            selectableLedgerUser(request.resource.data.debtorId)
+            && selectableLedgerUser(
+              getAfter(
+                /databases/$(database)/documents/ledger/$(request.resource.data.ledgerId)
+              ).data.creditorId
+            )
+            && request.resource.data.createdAt == request.time
+            && request.resource.data.updatedAt == request.time
+          )
+          || (
+            admin()
+            && historicalLedgerUser(request.resource.data.debtorId)
+            && historicalLedgerUser(
+              getAfter(
+                /databases/$(database)/documents/ledger/$(request.resource.data.ledgerId)
+              ).data.creditorId
+            )
+            && request.resource.data.createdAt is timestamp
+            && request.resource.data.updatedAt is timestamp
+          )
+        );
       allow update: if active()
         && validLedgerSplitKeys(request.resource.data)
         && validLedgerSplitValues(request.resource.data)
@@ -404,11 +441,20 @@ service cloud.firestore {
           'ledgerId'
         ])
         && request.resource.data.ledgerId is string
-        && request.resource.data.createdBy == request.auth.uid
         && request.resource.data.dataUrl is string
         && request.resource.data.dataUrl.size() <= 700000
-        && request.resource.data.createdAt == request.time
-        && ledgerManagedAfter(request.resource.data.ledgerId);
+        && ledgerManagedAfter(request.resource.data.ledgerId)
+        && (
+          (
+            request.resource.data.createdBy == request.auth.uid
+            && request.resource.data.createdAt == request.time
+          )
+          || (
+            admin()
+            && historicalLedgerUser(request.resource.data.createdBy)
+            && request.resource.data.createdAt is timestamp
+          )
+        );
       allow delete: if active()
         && (
           admin()

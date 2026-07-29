@@ -11,6 +11,7 @@ const APP_SHELL = [
   './favicon.svg',
   './assets/nyan-cat-loading.gif',
   './vendor/dijkstrajs.mjs',
+  './vendor/jszip.mjs',
   './vendor/qrcode.mjs',
 ];
 

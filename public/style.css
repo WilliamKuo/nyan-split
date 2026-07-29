@@ -946,6 +946,37 @@ input[readonly] {
   margin-bottom: 0;
 }
 
+.admin-backup-card {
+  display: grid;
+  gap: .9rem;
+}
+
+.admin-backup-card .card-heading {
+  margin-bottom: 0;
+}
+
+.admin-backup-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .75rem;
+}
+
+.admin-backup-actions button {
+  flex: 1 1 10rem;
+}
+
+.backup-status {
+  min-height: 1.4em;
+  margin: 0;
+  color: var(--muted);
+  font-size: .84rem;
+  line-height: 1.5;
+}
+
+.backup-status-error {
+  color: var(--rose);
+}
+
 .account-preferences-actions {
   display: flex;
   flex-wrap: wrap;
