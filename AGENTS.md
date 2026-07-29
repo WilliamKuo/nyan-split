@@ -16,15 +16,15 @@ NyanSplit is a Firebase-based shared accounting ledger with administrator approv
 ```
 /
 ├── public/                  # Static files served by Firebase Hosting
-│   ├── app.js              # Main application logic (~2000 lines)
+│   ├── app.js              # Main application logic
 │   ├── firebase-config.js  # Firebase configuration (public API keys)
 │   ├── i18n.js             # Bilingual translations (English/中文)
 │   ├── style.css           # Application styles
 │   ├── index.html          # Single page entry point
 │   ├── manifest.json       # PWA manifest
 │   ├── sw.js               # Service worker for offline support
-│   ├── VERSION             # Current version (1.0.0-rc)
-│   └── vendor/             # Third-party libraries (QRCode, etc.)
+│   ├── VERSION             # Current application version
+│   └── vendor/             # Third-party libraries (Dijkstra, JSZip, QRCode)
 ├── firestore.rules         # Firestore security rules (CRITICAL)
 ├── firebase.json           # Firebase hosting configuration
 ├── .firebaserc             # Firebase project ID
@@ -34,21 +34,20 @@ NyanSplit is a Firebase-based shared accounting ledger with administrator approv
 ## Key Files to Understand
 
 ### `public/app.js` (Main Application)
-- **State management**: Global variables at top (~line 70-95)
-- **Views**: `ledger`, `account`, `share`, `add-entry`, `conversion`, `admin-users`, `admin-currencies`
+- **State management**: Global variables at the top of the module
+- **Views**: `ledger`, `account`, `share`, `add-entry`, and `conversion`; administration controls appear in Account
 - **Core functions**:
-  - Authentication: Lines 27-28 (Firebase Auth imports)
-  - Firestore operations: Lines 1469+ (CRUD operations)
-  - Balance calculations: Lines 420-433
-  - Settlement algorithm: Lines 435-507
-  - Currency conversion: Lines 509-623
-  - Image compression: Lines 726-754
+  - Authentication: Google sign-in, registration, and `userAuth` marker creation
+  - Ledger CRUD: shared expense headers, individual debts, and receipt images
+  - Balance calculations and settlement suggestions
+  - Currency conversion and personal rate management
+  - JPEG receipt compression
 
 ### `firestore.rules` (Security)
 **CRITICAL**: All data security is enforced here. Firebase API keys are public; security comes from these rules.
 
 - User statuses: `pending`, `active`, `rejected`, `removed`; roles: `user`, `admin`
-- Collections: `users`, `ledger`, `ledgerImages`, `settings`
+- Collections: `users`, `userAuth`, `ledger`, `ledgerSplits`, `ledgerImages`, `settings`
 - Key functions: `signedIn()`, `active()`, `admin()`
 
 ### `public/i18n.js` (Translations)
@@ -89,7 +88,7 @@ firebase deploy
 ```
 
 **Testing approach**:
-1. Read existing rule patterns (lines 1-141 in `firestore.rules`)
+1. Read the existing helper functions and collection rules in `firestore.rules`
 2. Understand helper functions: `signedIn()`, `active()`, `admin()`, `allowedCurrency()`
 3. Add new rules following the same pattern
 4. Test with different user states: unauthenticated, pending, active, removed, admin
@@ -170,14 +169,14 @@ const helpText = t('newFeatureHelp');
 
 **Current implementation**:
 - Images stored as base64 data URLs in Firestore (`ledgerImages` collection)
-- Compressed to JPEG before upload (see `compressLedgerImage()` line 726)
-- Max size: 700KB (enforced by `firestore.rules`)
+- Compressed to JPEG before upload by `compressLedgerImage()`
+- Frontend compression target: 500 KiB; Firestore rule limit: 700,000 data-URL characters
 - Max dimension: 1600px, Min dimension: 480px
 
 **To modify image handling**:
-1. Update constants at top of `app.js` (lines 37-40)
+1. Update image constants at the top of `app.js`
 2. Modify `compressLedgerImage()` function
-3. Update size limit in `firestore.rules` line 132
+3. Update the `ledgerImages` data-URL limit in `firestore.rules`
 
 ### 7. Currency Management
 
@@ -188,8 +187,8 @@ const helpText = t('newFeatureHelp');
 - Blank user rates fall back to public API rates
 
 **To add currency features**:
-1. Update `COMMON_CURRENCIES` array (line 43-64)
-2. Modify currency conversion logic (lines 509-623)
+1. Update `CURRENCY_SUGGESTIONS` if the suggested-code list changes
+2. Modify currency conversion logic in `app.js`
 3. Update `allowedCurrency()` validation in `firestore.rules`
 
 ## Firestore Data Schema
@@ -197,70 +196,94 @@ const helpText = t('newFeatureHelp');
 ### `users/{uid}`
 ```javascript
 {
-  alias: string,           // Display name (max 40 chars)
-  email: string,           // From Firebase Auth
-  photoURL: string,        // From Firebase Auth
+  alias: string,              // Display name (max 40 chars)
+  createdAt: timestamp,
+  currencyRates: {            // Optional personal conversion rates
+    [currency]: number,
+  },
+  disabled: boolean,
+  email: string,              // From Firebase Auth; blank when removed/manual
+  ledgerSelectable: boolean,
+  photoURL: string,           // From Firebase Auth; blank when removed/manual
+  resultCurrency: string,     // User's preferred display currency
   role: 'user' | 'admin',
   status: 'pending' | 'active' | 'rejected' | 'removed',
-  resultCurrency: string,  // User's preferred display currency
-  currencyRates: {         // Optional custom rates
-    [currency]: number
-  },
-  createdAt: timestamp,
-  updatedAt: timestamp
+  updatedAt: timestamp,
+}
+```
+
+### `userAuth/{uid}`
+```javascript
+{
+  provider: 'google.com',
 }
 ```
 
 ### `ledger/{entryId}`
 ```javascript
 {
-  creditorId: string,      // UID of person who is owed
-  debtorId: string,        // UID of person who owes
-  amount: number,          // Positive number
+  creditorId: string,      // UID of the payer
+  createdAt: timestamp,
+  createdBy: string,       // UID of creator
   currency: string,        // 3-letter code (TWD, USD, etc.)
   note: string,            // Description
-  cleared: boolean,        // If true, excluded from balance calculations
-  createdBy: string,       // UID of creator
-  createdAt: timestamp
+  updatedAt: timestamp,
+}
+```
+
+### `ledgerSplits/{ledgerId}_{debtorId}`
+```javascript
+{
+  amount: number,          // Positive amount owed
+  cleared: boolean,        // If true, excluded from balances
+  createdAt: timestamp,
+  debtorId: string,        // UID of person who owes
+  ledgerId: string,        // Parent ledger header ID
+  position: number,        // Display order
+  updatedAt: timestamp,
 }
 ```
 
 ### `ledgerImages/{imageId}`
 ```javascript
 {
-  ledgerId: string,        // Reference to ledger entry
-  dataUrl: string,         // Base64 JPEG (max 700KB)
+  createdAt: timestamp,
   createdBy: string,       // UID of creator
-  createdAt: timestamp
+  dataUrl: string,         // Base64 JPEG (max 700,000 characters)
+  ledgerId: string,        // Reference to ledger entry
 }
 ```
 
 ### `settings/app`
 ```javascript
 {
+  allowedCurrencies: string[],  // Array of 3-letter codes
   defaultCurrency: string,      // Admin's default (e.g., 'TWD')
-  allowedCurrencies: string[]   // Array of 3-letter codes
+  updatedAt: timestamp,
+  updatedBy: string,
 }
 ```
 
 ## Security Model
 
 **Authentication Flow**:
-1. User signs in with Google or Anonymous
-2. Account created with `status: 'pending'`
-3. Admin manually approves → `status: 'active'`
-4. Only active users can access ledger data
-5. Removing an active user sets `status: 'removed'`, clears email, photo, and custom rates, and retains the alias for ledger history
+1. User signs in with Google.
+2. The app writes the user's `userAuth/{uid}` Google-provider marker.
+3. User creates an account with `status: 'pending'`.
+4. An admin approves the account, changing it to `status: 'active'`.
+5. Only active, non-disabled Google users can access ledger data.
+6. Admins can create active ledger-only users for people who do not sign in.
+7. Removing an active user sets `status: 'removed'`, clears email, photo, and custom rates, and retains the alias for ledger history.
 
 **Authorization Levels**:
 - **Unauthenticated**: Can only sign in
 - **Pending**: Can view own profile, waiting for approval
-- **Active**: Can read/write ledger, manage own entries
+- **Active Google user**: Can read/write ledger and manage own entries
 - **Removed**: Can view their own disabled profile but cannot access ledger data
-- **Admin**: Can approve users, manage currencies, delete any entry
+- **Admin**: Google user who can approve users, manage currencies, and delete any entry
 
 **Critical Rules**:
-- Only active users can read/write ledger
+- Only active, non-disabled Google users can read/write ledger
 - Users can only modify their own profile (except admin)
 - Ledger entries must use allowed currencies
 - Admin-only operations gated by `admin()` function
@@ -272,9 +295,11 @@ When making changes, test these scenarios:
 ### Authentication & Authorization
 - [ ] Unauthenticated user cannot access data
 - [ ] Pending user sees waiting message
-- [ ] Active user can view ledger
+- [ ] Active Google user can view ledger
+- [ ] Anonymous identities cannot create a profile or access ledger data
 - [ ] Non-admin cannot access admin features
 - [ ] Admin can approve/reject users
+- [ ] Admin can add a ledger-only user
 
 ### Ledger Operations
 - [ ] Create entry with valid currency
@@ -287,6 +312,7 @@ When making changes, test these scenarios:
 
 ### Currency & Conversion
 - [ ] Admin can add/remove currencies
+- [ ] Settings interface blocks removing a currency used by a ledger entry
 - [ ] Users see only allowed currencies
 - [ ] Personal rates override public rates
 - [ ] Balance calculation uses correct rates
@@ -295,7 +321,7 @@ When making changes, test these scenarios:
 ### Images
 - [ ] Upload image to ledger entry
 - [ ] Image compressed properly
-- [ ] Cannot upload oversized image (>700KB)
+- [ ] Cannot upload an image whose data URL exceeds 700,000 characters
 - [ ] Delete image
 - [ ] View multiple images per entry
 
@@ -325,7 +351,7 @@ When making changes, test these scenarios:
 ⚠️ Consider migration strategy for existing documents
 
 ### 5. **Image Size Issues**
-⚠️ Images must be under 700KB after compression
+⚠️ The frontend targets 500 KiB after compression; Firestore rejects data URLs above 700,000 characters
 ⚠️ Test with actual photos, not small test images
 ⚠️ Handle compression failures gracefully
 
@@ -348,7 +374,7 @@ This project has NO build step. It's pure HTML/CSS/JS served statically.
 
 ### External Dependencies (CDN)
 - Firebase SDK 11.6.1 (loaded from CDN in `app.js`)
-- QRCode.js (in `vendor/` directory)
+- Dijkstra, JSZip, and QRCode modules (in `public/vendor/`)
 
 ### System Requirements
 - Python 3 (for local dev server, or any alternative)
@@ -426,14 +452,9 @@ Before making changes:
 - **Firestore Rules**: https://firebase.google.com/docs/firestore/security/get-started
 - **PWA Guide**: https://web.dev/progressive-web-apps/
 
-## Version History
+## Version
 
-- **1.0.0-rc**: Current release candidate
-  - All core features implemented
-  - Receipt image attachments
-  - Entry clearing
-  - Multi-currency with custom rates
-  - Settlement plan optimization
+`public/VERSION` is the source of truth for the current application version. Update it when publishing a release.
 
 ---
 

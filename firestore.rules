@@ -20,6 +20,7 @@ service cloud.firestore {
     }
     function active() {
       return signedIn()
+        && googleIdentity()
         && exists(/databases/$(database)/documents/users/$(request.auth.uid))
         && user().data.status == 'active'
         && enabled(user().data);
@@ -277,7 +278,7 @@ service cloud.firestore {
     }
 
     match /users/{userId} {
-      allow create: if (signedIn() && request.auth.uid == userId
+      allow create: if (googleIdentity() && request.auth.uid == userId
         && request.resource.data.status == 'pending'
         && request.resource.data.role == 'user'
         && validAlias(request.resource.data.alias)

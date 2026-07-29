@@ -225,6 +225,20 @@ input[readonly] {
   line-height: 1.55;
 }
 
+.google-login-button {
+  display: inline-flex;
+  width: 100%;
+  align-items: center;
+  justify-content: center;
+  gap: .65rem;
+}
+
+.google-login-icon {
+  flex: 0 0 auto;
+  width: 1.15rem;
+  height: 1.15rem;
+}
+
 .stack-form {
   display: grid;
   gap: .9rem;
@@ -2106,7 +2120,7 @@ html[data-theme="light"] .app-nav {
   justify-content: center;
   cursor: pointer;
   transition: all 0.2s ease-in-out;
-  z-index: 20;
+  z-index: 10;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
 }
 

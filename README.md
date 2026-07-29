@@ -7,7 +7,7 @@ A Firebase-based shared accounting ledger with administrator approval.
 - **Grouped shared expenses** – Track several users owing one payer under a shared note, currency, and receipt
 - **Admin approval workflow** – New registrations require administrator approval
 - **Admin user controls** – Manage roles, reversible access, and who can be selected in new ledger entries
-- **Google-only administrators** – Anonymous and manually created users cannot receive the administrator role
+- **Google-only sign-in** – Manually created users remain ledger-only participants
 - **Multi-currency support** – Admins manage allowed currencies; users set personal conversion rates
 - **Receipt attachments** – Add shared photos or receipts to an expense (compressed to JPEG)
 - **Admin ledger backups** – Export and safely add missing ledger records from one ZIP file
@@ -20,7 +20,7 @@ A Firebase-based shared accounting ledger with administrator approval.
 
 ## Deployment
 
-1. **Firebase Console Setup**: Create a Firebase project, enable **Google** and **Anonymous** sign-in providers under Authentication (add your host domain to Authorized Domains), and create a **Firestore Database**.
+1. **Firebase Console Setup**: Create a Firebase project, enable only the **Google** sign-in provider under Authentication, disable **Anonymous**, add your host domain to Authorized Domains, and create a **Firestore Database**.
 2. **Update Configuration**:
    - Edit `public/firebase-config.js` and replace with your Firebase Web App credentials:
      ```javascript
@@ -48,7 +48,7 @@ A Firebase-based shared accounting ledger with administrator approval.
    firebase deploy
    ```
 4. **Bootstrap Initial Admin**:
-   - Sign in with Google and complete registration. Do not use an anonymous or manually created user for the initial administrator.
+   - Sign in with Google and complete registration. Manually created users are ledger-only participants and cannot sign in.
    - In Firebase Console > Firestore, verify that `users/{uid}` exists and that `userAuth/{uid}` contains exactly `{ provider: "google.com" }`.
    - Update only the matching `users/{uid}` document to set `role: "admin"` and `status: "active"`. Do not create or edit the protected `userAuth` marker manually.
 
@@ -56,13 +56,13 @@ A Firebase-based shared accounting ledger with administrator approval.
 
 Only active, non-disabled accounts can access the shared ledger. Each ledger entry represents one expense with a shared payer, note, currency, and set of images. Its `ledgerSplits` documents record the individual users and amounts owed to that payer. Each debt can be cleared independently, while the expense controls can clear, restore, or remove all of its debts together. The result card shows only the signed-in user's net balance. User approval, rejection, role changes, disabling, ledger selectability, profile removal, and currency-allowlist changes are restricted to administrators by `firestore.rules`. Deploy those rules before treating the app as usable.
 
-Assigning the administrator role requires a matching `userAuth/{uid}` document whose provider is `google.com`. Only that signed-in Google identity can create or repair its own marker, so administrators cannot promote anonymous or manually created users by changing profile data alone.
+Accessing the ledger or assigning the administrator role requires a Google identity. A matching `userAuth/{uid}` document whose provider is `google.com` is also required for administrator assignment. Only that signed-in Google identity can create or repair its own marker, so administrators cannot promote manually created users by changing profile data alone.
 
-Anonymous sign-ins follow the same registration and approval flow as Google sign-ins. Disabling a user is reversible: it preserves their status, role, profile, ledger selectability setting, and history while revoking app access. A missing `disabled` field is treated as `false` for existing profiles. Removing an active user instead marks their profile as `removed`, clears their email, photo, and custom rates, resets `disabled`, demotes them to `user`, revokes app access, and retains their alias for ledger history. Removing a pending or rejected registration deletes its Firestore profile. Neither operation deletes the Firebase Authentication account; that requires a trusted backend using the Firebase Admin SDK.
+Only Google sign-ins can register or access the ledger. Administrators can still create ledger-only users for people who do not need to sign in. Disabling a user is reversible: it preserves their status, role, profile, ledger selectability setting, and history while revoking app access. A missing `disabled` field is treated as `false` for existing profiles. Removing an active user instead marks their profile as `removed`, clears their email, photo, and custom rates, resets `disabled`, demotes them to `user`, revokes app access, and retains their alias for ledger history. Removing a pending or rejected registration deletes its Firestore profile. Neither operation deletes the Firebase Authentication account; that requires a trusted backend using the Firebase Admin SDK.
 
 ## Ledger and currency behavior
 
-New or unconfigured apps allow only TWD, which is also the default currency. In the Settings Currencies tab, an administrator can add currencies such as JPY or USD, remove them, and choose the default. Each expense uses one allowed currency shared by all of its debts, initially selecting the administrator's default. At the bottom of Ledger, each user can save a result currency and optional personal conversion-rate overrides expressed in that result currency. Blank rate fields use the public ExchangeRate API rate. Currency codes use three uppercase ISO letters. Expenses and debts retain their original currency and amounts; every user's balances and suggested transfers are calculated using that user's current saved rate settings.
+New or unconfigured apps allow only TWD, which is also the default currency. In the Settings Currencies tab, an administrator can add currencies such as JPY or USD, remove unused currencies, and choose the default. The settings interface blocks removal of a currency referenced by a ledger entry and rechecks the latest server data before saving. Firestore rules do not independently enforce this invariant, so do not remove an in-use currency through the Firebase Console or custom administrator code. Each expense uses one allowed currency shared by all of its debts, initially selecting the administrator's default. At the bottom of Ledger, each user can save a result currency and optional personal conversion-rate overrides expressed in that result currency. Blank rate fields use the public ExchangeRate API rate. Currency codes use three uppercase ISO letters. Expenses and debts retain their original currency and amounts; every user's balances and suggested transfers are calculated using that user's current saved rate settings.
 
 The ledger shows net balances and a settlement plan that minimizes the number of transfers. Only uncleared debts contribute to balances. Mixed-currency expenses are converted using the signed-in user's saved result currency and rate settings.
 
@@ -108,7 +108,7 @@ A user profile is stored in `users/{userId}`:
 }
 ```
 
-Anonymous and manually created users do not have this marker and therefore cannot become administrators.
+Manually created users do not have this marker and therefore cannot sign in or become administrators.
 
 An expense stores its shared fields in `ledger/{entryId}`:
 
