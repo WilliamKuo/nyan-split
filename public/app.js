@@ -135,6 +135,24 @@ let ledgerEntriesReady = false;
 let ledgerSplitsReady = false;
 let ledgerFilter = '';
 let ledgerCollapsed = localStorage.getItem('nyan-split-ledger-collapsed') === 'true';
+
+function loadLedgerExpandedFooters() {
+  try {
+    const stored = JSON.parse(localStorage.getItem('nyan-split-ledger-footer-expanded') || '[]');
+    return new Set(Array.isArray(stored) ? stored.filter((id) => typeof id === 'string') : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function persistLedgerExpandedFooters() {
+  localStorage.setItem(
+    'nyan-split-ledger-footer-expanded',
+    JSON.stringify([...ledgerExpandedFooters]),
+  );
+}
+
+let ledgerExpandedFooters = loadLedgerExpandedFooters();
 let adminShowAllUsers = localStorage.getItem('nyan-split-admin-show-all-users') === 'true';
 let ledgerImages = new Map();
 let selectableUsers = [];
@@ -1710,18 +1728,30 @@ function renderLedgerRows(entries = ledgerEntries) {
         <button class="clear-entry-button danger" type="button" data-delete-entry="${escapeHtml(entry.id)}">${escapeHtml(t('deleteEntry'))}</button>
       </div>`
       : '';
+    const footerExpanded = ledgerExpandedFooters.has(entry.id);
+    const footerToggleIcon = footerExpanded ? '▼' : '▶';
     return `<article class="ledger-group ledger-group-${escapeHtml(clearState)}">
       <header class="ledger-group-header">
         <div class="ledger-group-title">
           <strong class="ledger-group-note">${escapeHtml(entry.note || '—')}</strong>
           ${status ? `<span class="ledger-group-status">${escapeHtml(status)}</span>` : ''}
         </div>
-        <div class="ledger-image-cell">${renderLedgerImageButton(entry)}</div>
+        <div class="ledger-group-header-tools">
+          <div class="ledger-image-cell">${renderLedgerImageButton(entry)}</div>
+          <button
+            class="ledger-row-meta-toggle"
+            type="button"
+            data-toggle-row-meta="${escapeHtml(entry.id)}"
+            aria-expanded="${footerExpanded}"
+            aria-controls="ledger-group-footer-${escapeHtml(entry.id)}"
+            title="${escapeHtml(footerExpanded ? t('hideEntryDetails') : t('showEntryDetails'))}"
+          >${footerToggleIcon}</button>
+        </div>
       </header>
       <div class="ledger-split-list">
         ${splitRows || `<p class="muted">${escapeHtml(t('noDebts'))}</p>`}
       </div>
-      <footer class="ledger-group-footer">
+      <footer id="ledger-group-footer-${escapeHtml(entry.id)}" class="ledger-group-footer${footerExpanded ? '' : ' ledger-group-footer-collapsed'}">
         <span class="ledger-group-creator">${escapeHtml(t('createdBy', { name: creator }))}</span>
         ${actions}
       </footer>
@@ -2556,6 +2586,23 @@ function bindLedgerRows() {
       selectedLedgerImageIndex = 0;
       discardLedgerEditDraft();
       render();
+    };
+  });
+  document.querySelectorAll('[data-toggle-row-meta]').forEach((button) => {
+    button.onclick = () => {
+      const entryId = button.dataset.toggleRowMeta;
+      const footer = button.closest('.ledger-group')?.querySelector('.ledger-group-footer');
+      if (ledgerExpandedFooters.has(entryId)) {
+        ledgerExpandedFooters.delete(entryId);
+      } else {
+        ledgerExpandedFooters.add(entryId);
+      }
+      persistLedgerExpandedFooters();
+      const expanded = ledgerExpandedFooters.has(entryId);
+      footer?.classList.toggle('ledger-group-footer-collapsed', !expanded);
+      button.setAttribute('aria-expanded', String(expanded));
+      button.title = expanded ? t('hideEntryDetails') : t('showEntryDetails');
+      button.textContent = expanded ? '▼' : '▶';
     };
   });
 }
