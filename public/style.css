@@ -628,6 +628,20 @@ input[readonly] {
   padding-right: 2.4rem;
 }
 
+.ledger-filter input::-webkit-search-decoration,
+.ledger-filter input::-webkit-search-cancel-button,
+.ledger-filter input::-webkit-search-results-button,
+.ledger-filter input::-webkit-search-results-decoration {
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.ledger-filter input[type="search"]::-ms-clear {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
 .ledger-filter-clear {
   position: absolute;
   top: 50%;
@@ -1233,10 +1247,9 @@ tbody tr:last-child td {
 }
 
 .ledger-group-footer {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, auto);
   align-items: center;
-  justify-content: space-between;
   gap: .6rem;
   padding: .65rem .9rem;
   background: rgb(155 135 245 / 5%);
@@ -1252,9 +1265,11 @@ tbody tr:last-child td {
 
 .ledger-group-actions {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: .4rem;
+  flex-wrap: nowrap;
+  align-items: stretch;
+  justify-content: flex-end;
+  gap: .35rem;
+  max-width: 100%;
 }
 
 .ledger-group-editing {
@@ -1455,12 +1470,16 @@ output.ledger-split-field-context {
 }
 
 .clear-entry-button {
+  min-width: 0;
   min-height: 2rem;
-  padding: .35rem .55rem;
+  padding: .35rem .45rem;
   color: var(--violet-light);
   background: rgb(155 135 245 / 12%);
   border-color: rgb(155 135 245 / 28%);
-  font-size: .73rem;
+  font-size: .7rem;
+  line-height: 1.2;
+  text-align: center;
+  white-space: normal;
 }
 
 .clear-entry-button.danger {
@@ -1588,6 +1607,7 @@ output.ledger-split-field-context {
   opacity: .62;
 }
 
+.admin-users-show-all,
 .admin-user-ledger-toggle {
   display: inline-flex;
   align-items: center;
@@ -1596,6 +1616,53 @@ output.ledger-split-field-context {
   font-size: .78rem;
   font-weight: 700;
   white-space: nowrap;
+}
+
+.admin-users-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: .5rem;
+  margin-bottom: 1rem;
+}
+
+.admin-add-user-form {
+  flex: 1 1 12rem;
+  min-width: 0;
+  margin-bottom: 0;
+}
+
+.admin-add-user-form .field {
+  flex: 1 1 8rem;
+  min-width: 0;
+  width: auto;
+}
+
+.admin-clear-removed-users {
+  flex: 0 0 auto;
+  min-height: 44px;
+  padding: .4rem .55rem;
+  font-size: .72rem;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.admin-users-show-all input {
+  width: 1.1rem;
+  height: 1.1rem;
+  min-height: 1.1rem;
+  margin: 0;
+  padding: 0;
+  accent-color: var(--violet);
+}
+
+.admin-users-card {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.admin-users-heading {
+  align-items: start;
 }
 
 .admin-user-ledger-toggle input {
@@ -1794,6 +1861,128 @@ html[data-theme="light"] .app-nav {
   .ledger-edit-shared-fields {
     grid-template-columns: minmax(0, 1fr);
   }
+
+  .admin-users-toolbar {
+    flex-wrap: nowrap;
+    gap: .45rem;
+  }
+
+  .admin-add-user-form {
+    flex-wrap: nowrap;
+  }
+
+  .admin-users-table-wrap {
+    border: 0;
+    border-radius: 0;
+    overflow: visible;
+  }
+
+  .admin-users-table {
+    display: block;
+    min-width: 0;
+  }
+
+  .admin-users-table thead {
+    display: none;
+  }
+
+  .admin-users-table tbody {
+    display: grid;
+    gap: .6rem;
+  }
+
+  .admin-users-table tbody tr {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "user    status"
+      "role    ledger"
+      "actions actions";
+    gap: .35rem .6rem;
+    padding: .75rem .85rem;
+    background: var(--surface-raised);
+    border: 1px solid var(--line);
+    border-radius: .85rem;
+  }
+
+  .admin-users-table tbody tr td {
+    padding: 0;
+    border: 0;
+    min-width: 0;
+  }
+
+  .admin-users-table tbody tr td:nth-child(1) {
+    grid-area: user;
+    overflow: hidden;
+  }
+
+  .admin-users-table tbody tr td:nth-child(2) {
+    grid-area: role;
+    align-self: center;
+  }
+
+  .admin-users-table tbody tr td:nth-child(3) {
+    grid-area: ledger;
+    align-self: center;
+    justify-self: end;
+  }
+
+  .admin-users-table tbody tr td:nth-child(4) {
+    grid-area: status;
+    justify-self: end;
+  }
+
+  .admin-users-table tbody tr td:nth-child(5) {
+    grid-area: actions;
+    width: auto;
+    min-width: 0;
+    white-space: normal;
+    padding-top: .25rem;
+    border-top: 1px solid var(--line);
+  }
+
+  .admin-users-table .admin-user-role {
+    width: 100%;
+    min-width: 0;
+    max-width: 9rem;
+    font-size: .74rem;
+  }
+
+  .admin-users-table .admin-user-ledger-toggle {
+    justify-content: flex-end;
+    font-size: .72rem;
+    white-space: normal;
+  }
+
+  .admin-users-table .user-actions {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .admin-users-table .user-actions button {
+    flex: 1 1 0;
+    min-width: 0;
+    padding: .4rem .45rem;
+    font-size: .7rem;
+    line-height: 1.2;
+    white-space: normal;
+    text-align: center;
+  }
+
+  .admin-users-show-all span {
+    white-space: normal;
+  }
+
+  .admin-clear-removed-users {
+    padding: .35rem .45rem;
+    font-size: .66rem;
+  }
+
+  .admin-add-user-form button {
+    padding-right: .7rem;
+    padding-left: .7rem;
+    font-size: .78rem;
+  }
 }
 
 @media (max-width: 500px) {
@@ -1918,15 +2107,20 @@ html[data-theme="light"] .app-nav {
     width: 100%;
   }
 
+  .ledger-group-footer {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   .ledger-group-actions {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(7rem, 1fr));
+    justify-content: stretch;
     width: 100%;
   }
 
-  .ledger-group-actions button {
-    width: 100%;
+  .ledger-group-actions .clear-entry-button {
+    flex: 1 1 0;
     min-height: 44px;
+    padding: .3rem .25rem;
+    font-size: .66rem;
   }
 
   .ledger-image-button {
@@ -1961,73 +2155,6 @@ html[data-theme="light"] .app-nav {
 
   .ledger-edit-actions button {
     width: 100%;
-  }
-
-  /* -- Card-based admin users for mobile -- */
-  .admin-users-table {
-    display: block;
-    min-width: 0;
-  }
-
-  .admin-users-table thead {
-    display: none;
-  }
-
-  .admin-users-table tbody {
-    display: grid;
-    gap: .6rem;
-  }
-
-  .admin-users-table tbody tr {
-    display: grid;
-    grid-template-columns: 1fr auto;
-    grid-template-areas:
-      "user    status"
-      "role    ledger"
-      "actions actions";
-    gap: .35rem .6rem;
-    padding: .75rem .85rem;
-    background: var(--surface-raised);
-    border: 1px solid var(--line);
-    border-radius: .85rem;
-  }
-
-  .admin-users-table tbody tr td {
-    padding: 0;
-    border: 0;
-  }
-
-  .admin-users-table tbody tr td:nth-child(1) {
-    grid-area: user;
-  }
-
-  .admin-users-table tbody tr td:nth-child(2) {
-    grid-area: role;
-    align-self: center;
-  }
-
-  .admin-users-table tbody tr td:nth-child(3) {
-    grid-area: ledger;
-    align-self: center;
-    justify-self: end;
-  }
-
-  .admin-users-table tbody tr td:nth-child(4) {
-    grid-area: status;
-    justify-self: end;
-  }
-
-  .admin-users-table tbody tr td:nth-child(5) {
-    grid-area: actions;
-    width: auto;
-    min-width: 0;
-    white-space: normal;
-    padding-top: .25rem;
-    border-top: 1px solid var(--line);
-  }
-
-  .admin-users-table tbody tr td:nth-child(5) {
-    flex-wrap: wrap;
   }
 
   /* -- Currency rate table mobile -- */

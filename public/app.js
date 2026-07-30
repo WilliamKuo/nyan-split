@@ -135,6 +135,7 @@ let ledgerEntriesReady = false;
 let ledgerSplitsReady = false;
 let ledgerFilter = '';
 let ledgerCollapsed = localStorage.getItem('nyan-split-ledger-collapsed') === 'true';
+let adminShowAllUsers = localStorage.getItem('nyan-split-admin-show-all-users') === 'true';
 let ledgerImages = new Map();
 let selectableUsers = [];
 let knownUsers = [];
@@ -153,6 +154,7 @@ let ledgerEditDraft = null;
 let ledgerNewDraft = null;
 let nextLedgerSplitDraftId = 0;
 let isClearingLedgerData = false;
+let isClearingRemovedUsers = false;
 let pendingLedgerImageFocus = null;
 let seedingCurrencyRates = false;
 let initialCurrencyRatesSeeded = false;
@@ -2048,8 +2050,24 @@ function renderUserActions(user) {
   return actions.join('') || '<span class="muted">—</span>';
 }
 
+function isAdminUserHiddenByDefault(user) {
+  return user.status === 'removed'
+    || user.status === 'rejected'
+    || (user.status === 'active' && user.disabled === true);
+}
+
+function visibleManagedUsers() {
+  if (adminShowAllUsers) return managedUsers;
+  return managedUsers.filter((user) => !isAdminUserHiddenByDefault(user));
+}
+
 function renderUserRows() {
-  return managedUsers.map((user) => {
+  const users = visibleManagedUsers();
+  if (!users.length) {
+    return `<tr><td colspan="5" class="muted">${escapeHtml(t('noVisibleUsers'))}</td></tr>`;
+  }
+
+  return users.map((user) => {
     const googleVerified = userHasVerifiedGoogleIdentity(user.id);
     return `<tr>
       <td>
@@ -2087,14 +2105,49 @@ function renderAdminCurrencySettings(adminSettings) {
     </section>`;
 }
 
+function removedUsers() {
+  return managedUsers.filter((user) => user.status === 'removed');
+}
+
+function isUserReferencedInLedger(userId) {
+  return ledgerEntries.some((entry) => (
+    entry.creditorId === userId || entry.createdBy === userId
+  )) || ledgerSplits.some((split) => split.debtorId === userId);
+}
+
 function renderAdminUsers() {
-  return `<section class="accounting-card">
-      <div class="card-heading"><div><h3>${escapeHtml(t('users'))}</h3><p>${escapeHtml(t('usersHelp'))}</p></div></div>
-      <form id="add-user-form" class="inline-form" style="margin-bottom: 1rem;">
-        <label class="field"><span>${escapeHtml(t('alias'))}</span><input name="alias" maxlength="40" placeholder="${escapeHtml(t('alias'))}" required autocomplete="off" /></label>
-        <button type="submit" class="secondary-button">${escapeHtml(t('addUser'))}</button>
-      </form>
-      <div class="table-wrap"><table class="admin-users-table">
+  const removedUserCount = removedUsers().length;
+  const clearRemovedUsersButton = removedUserCount ? `<button
+          class="secondary-button danger-text admin-clear-removed-users"
+          type="button"
+          data-action="clear-removed-users"
+          title="${escapeHtml(t('clearRemovedUsersHelp'))}"
+          aria-label="${escapeHtml(t('clearRemovedUsers', { count: removedUserCount }))}"
+          ${isClearingRemovedUsers || isClearingLedgerData || isBackupBusy ? 'disabled' : ''}
+        >${escapeHtml(t(isClearingRemovedUsers ? 'clearingRemovedUsers' : 'clearRemovedUsers', { count: removedUserCount }))}</button>` : '';
+
+  return `<section class="accounting-card admin-users-card">
+      <div class="card-heading admin-users-heading">
+        <div><h3>${escapeHtml(t('users'))}</h3><p>${escapeHtml(t('usersHelp'))}</p></div>
+        <label class="admin-users-show-all">
+          <input
+            type="checkbox"
+            role="switch"
+            data-action="toggle-admin-show-all-users"
+            aria-label="${escapeHtml(t('showAllUsers'))}"
+            ${adminShowAllUsers ? 'checked' : ''}
+          />
+          <span>${escapeHtml(t('showAllUsers'))}</span>
+        </label>
+      </div>
+      <div class="admin-users-toolbar">
+        <form id="add-user-form" class="inline-form admin-add-user-form">
+          <label class="field"><span>${escapeHtml(t('alias'))}</span><input name="alias" maxlength="40" placeholder="${escapeHtml(t('alias'))}" required autocomplete="off" /></label>
+          <button type="submit" class="secondary-button">${escapeHtml(t('addUser'))}</button>
+        </form>
+        ${clearRemovedUsersButton}
+      </div>
+      <div class="table-wrap admin-users-table-wrap"><table class="admin-users-table">
         <thead><tr><th>${escapeHtml(t('user'))}</th><th>${escapeHtml(t('role'))}</th><th>${escapeHtml(t('ledgerSelectable'))}</th><th>${escapeHtml(t('status'))}</th><th>${escapeHtml(t('actions'))}</th></tr></thead>
         <tbody>${renderUserRows()}</tbody>
       </table></div>
@@ -2634,6 +2687,15 @@ function bind() {
   document.querySelectorAll('[data-remove-user]').forEach((button) => {
     button.onclick = () => removeUser(button.dataset.removeUser);
   });
+  document.querySelector('[data-action="toggle-admin-show-all-users"]')?.addEventListener('change', (event) => {
+    adminShowAllUsers = event.currentTarget.checked;
+    localStorage.setItem('nyan-split-admin-show-all-users', adminShowAllUsers);
+    render();
+  });
+  document.querySelector('[data-action="clear-removed-users"]')?.addEventListener(
+    'click',
+    clearRemovedUsers,
+  );
   document.querySelector('[data-action="export-backup"]')?.addEventListener(
     'click',
     exportLedgerBackup,
@@ -3475,6 +3537,60 @@ async function removeUser(userId) {
     setNotice(t('userRemoved'));
   } catch (error) {
     reportError(error);
+  }
+}
+
+async function clearRemovedUsers() {
+  if (
+    !currentUserIsAdmin()
+    || isClearingRemovedUsers
+    || isClearingLedgerData
+    || isBackupBusy
+  ) {
+    return;
+  }
+
+  const removed = removedUsers();
+  if (!removed.length) {
+    setNotice(t('noRemovedUsersToClear'));
+    return;
+  }
+
+  const deletable = removed.filter((user) => !isUserReferencedInLedger(user.id));
+  const skipped = removed.length - deletable.length;
+
+  if (!deletable.length) {
+    setNotice(t('removedUsersStillReferenced', { count: skipped }));
+    return;
+  }
+
+  const skippedNote = skipped
+    ? t('clearRemovedUsersSkippedNote', { skipped })
+    : '';
+  if (!window.confirm(t('clearRemovedUsersConfirm', {
+    count: deletable.length,
+    skippedNote,
+  }))) {
+    return;
+  }
+
+  isClearingRemovedUsers = true;
+  render();
+
+  try {
+    await Promise.all(deletable.map((user) => deleteDoc(doc(db, 'users', user.id))));
+    const resultSkippedNote = skipped
+      ? t('clearRemovedUsersSkippedNote', { skipped })
+      : '';
+    setNotice(t('removedUsersCleared', {
+      count: deletable.length,
+      skippedNote: resultSkippedNote,
+    }));
+  } catch (error) {
+    reportError(error);
+  } finally {
+    isClearingRemovedUsers = false;
+    render();
   }
 }
 

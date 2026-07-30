@@ -332,6 +332,7 @@ service cloud.firestore {
         && (
           resource.data.status == 'pending'
           || resource.data.status == 'rejected'
+          || resource.data.status == 'removed'
         );
     }
     match /userAuth/{userId} {
