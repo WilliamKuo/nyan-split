@@ -277,10 +277,17 @@ input[readonly] {
   min-width: 0;
 }
 
-.entry-camera-button {
+.entry-camera-button,
+.entry-image-open-button {
   position: relative;
   width: 44px;
   padding: .6rem;
+}
+
+.entry-image-open-button {
+  width: auto;
+  min-height: 2rem;
+  padding: .35rem .65rem;
 }
 
 .entry-camera-field {
@@ -1578,10 +1585,49 @@ output.ledger-split-field-context {
 }
 
 .ledger-image-actions {
-  display: grid;
-  gap: .75rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  justify-content: center;
+  gap: .55rem;
   width: 100%;
-  justify-items: center;
+}
+
+.ledger-image-action {
+  flex: 1 1 0;
+  min-width: min(100%, 6.5rem);
+  justify-content: center;
+  text-align: center;
+}
+
+.ledger-image-actions .secondary-button.ledger-image-action {
+  min-height: 44px;
+  padding: .6rem .55rem;
+  font-size: .82rem;
+}
+
+.ledger-image-actions .secondary-button.ledger-image-action[disabled] {
+  opacity: .45;
+  cursor: not-allowed;
+}
+
+.ledger-image-page {
+  gap: .85rem;
+}
+
+.ledger-image-heading {
+  padding-right: 0;
+}
+
+.ledger-image-footer {
+  display: flex;
+  justify-content: stretch;
+  width: 100%;
+}
+
+.ledger-image-footer .secondary-button {
+  width: 100%;
+  min-height: 44px;
 }
 
 .icon-button {

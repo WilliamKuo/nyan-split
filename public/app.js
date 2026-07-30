@@ -1311,64 +1311,131 @@ function ledgerEntryImageKey(entryId = '') {
     : NEW_LEDGER_ENTRY_IMAGE_KEY;
 }
 
-function pendingLedgerEntryImageFiles(imageKey) {
+function pendingLedgerEntryImageItems(imageKey) {
   return pendingLedgerEntryImages.get(imageKey) || [];
 }
 
-function ledgerEntryImagePickerLabel(imageCount) {
-  return imageCount
-    ? `${t('takePhoto')}. ${t('imagesSelected', { count: imageCount })}`
-    : t('takePhoto');
+function pendingLedgerEntryImageFiles(imageKey) {
+  return pendingLedgerEntryImageItems(imageKey).map((item) => item.file);
+}
+
+function revokePendingLedgerEntryImages(imageKey) {
+  pendingLedgerEntryImageItems(imageKey).forEach((item) => {
+    URL.revokeObjectURL(item.previewUrl);
+  });
+  pendingLedgerEntryImages.delete(imageKey);
+}
+
+function clearAllPendingLedgerEntryImages() {
+  [...pendingLedgerEntryImages.keys()].forEach(revokePendingLedgerEntryImages);
+}
+
+function addPendingLedgerEntryImages(imageKey, files) {
+  const validFiles = Array.from(files || []).filter((file) => file.size > 0);
+  if (!validFiles.length) return false;
+  if (validFiles.some((file) => !file.type.startsWith('image/'))) {
+    setErrorNotice(t('imageUnsupported'));
+    return false;
+  }
+
+  const queued = [
+    ...pendingLedgerEntryImageItems(imageKey),
+    ...validFiles.map((file) => ({
+      file,
+      previewUrl: URL.createObjectURL(file),
+    })),
+  ];
+  pendingLedgerEntryImages.set(imageKey, queued);
+  return true;
+}
+
+function removePendingLedgerEntryImage(imageKey, pendingIndex) {
+  const items = pendingLedgerEntryImageItems(imageKey);
+  const item = items[pendingIndex];
+  if (!item) return false;
+  URL.revokeObjectURL(item.previewUrl);
+  items.splice(pendingIndex, 1);
+  if (items.length) {
+    pendingLedgerEntryImages.set(imageKey, items);
+  } else {
+    revokePendingLedgerEntryImages(imageKey);
+  }
+  return true;
+}
+
+function ledgerImageViewerEntryId(entryId = '') {
+  return entryId || NEW_LEDGER_ENTRY_IMAGE_KEY;
+}
+
+function ledgerImageViewerPendingKey(viewerEntryId) {
+  return viewerEntryId === NEW_LEDGER_ENTRY_IMAGE_KEY
+    ? NEW_LEDGER_ENTRY_IMAGE_KEY
+    : `edit:${viewerEntryId}`;
+}
+
+function shouldUsePendingLedgerImages(viewerEntryId) {
+  if (viewerEntryId === NEW_LEDGER_ENTRY_IMAGE_KEY) return true;
+  if (editingLedgerEntryId === viewerEntryId) return true;
+  return pendingLedgerEntryImageItems(
+    ledgerImageViewerPendingKey(viewerEntryId),
+  ).length > 0;
+}
+
+function ledgerViewerImages(viewerEntryId) {
+  const savedImages = viewerEntryId === NEW_LEDGER_ENTRY_IMAGE_KEY
+    ? []
+    : ledgerImagesForEntry(viewerEntryId);
+  const pendingItems = pendingLedgerEntryImageItems(
+    ledgerImageViewerPendingKey(viewerEntryId),
+  );
+  return [
+    ...savedImages.map((image) => ({
+      id: image.id,
+      dataUrl: image.dataUrl,
+      pending: false,
+    })),
+    ...pendingItems.map((item, index) => ({
+      id: `pending:${index}`,
+      dataUrl: item.previewUrl,
+      pending: true,
+    })),
+  ];
+}
+
+function ledgerImageBackLabel(viewerEntryId) {
+  if (viewerEntryId === NEW_LEDGER_ENTRY_IMAGE_KEY) return t('backToNewEntry');
+  if (editingLedgerEntryId === viewerEntryId) return t('backToEditEntry');
+  return t('backToLedger');
+}
+
+function closeLedgerImageViewer() {
+  selectedLedgerImageEntryId = '';
+  selectedLedgerImageIndex = 0;
 }
 
 function renderLedgerEntryImagePicker(entryId = '') {
+  const viewerEntryId = ledgerImageViewerEntryId(entryId);
   const imageKey = ledgerEntryImageKey(entryId);
-  const imageCount = pendingLedgerEntryImageFiles(imageKey).length;
-  const pickerLabel = ledgerEntryImagePickerLabel(imageCount);
+  const savedCount = entryId ? ledgerImagesForEntry(entryId).length : 0;
+  const pendingCount = pendingLedgerEntryImageItems(imageKey).length;
+  const imageCount = savedCount + pendingCount;
+  const label = imageCount
+    ? t('viewImageCount', { count: imageCount })
+    : t('addImage');
 
   return `<div class="entry-camera-field">
     <span class="entry-camera-caption">${escapeHtml(t('image'))}</span>
-    <label class="file-picker entry-camera-button" title="${escapeHtml(pickerLabel)}">
-      <input class="sr-only" name="entryImageCamera" type="file" accept="image/*" capture="environment" multiple />
+    <button
+      class="ledger-image-button secondary-button entry-image-open-button"
+      type="button"
+      data-view-ledger-image="${escapeHtml(viewerEntryId)}"
+      aria-label="${escapeHtml(label)}"
+      title="${escapeHtml(label)}"
+    >
       <span aria-hidden="true">📷</span>
       <span class="entry-image-count"${imageCount ? '' : ' hidden'} aria-hidden="true">${escapeHtml(imageCount)}</span>
-      <span class="sr-only entry-image-label">${escapeHtml(pickerLabel)}</span>
-    </label>
+    </button>
   </div>`;
-}
-
-function bindLedgerEntryImagePicker(form, entryId = '') {
-  const imageInput = form?.elements.entryImageCamera;
-  if (!imageInput) return;
-
-  const imageKey = ledgerEntryImageKey(entryId);
-  imageInput.addEventListener('change', (event) => {
-    const input = event.currentTarget;
-    const files = Array.from(input.files || []).filter((file) => file.size > 0);
-    input.value = '';
-    if (!files.length) return;
-    if (files.some((file) => !file.type.startsWith('image/'))) {
-      setErrorNotice(t('imageUnsupported'));
-      return;
-    }
-
-    const queuedFiles = [
-      ...pendingLedgerEntryImageFiles(imageKey),
-      ...files,
-    ];
-    pendingLedgerEntryImages.set(imageKey, queuedFiles);
-
-    const picker = input.closest('.entry-camera-button');
-    const pickerLabel = ledgerEntryImagePickerLabel(queuedFiles.length);
-    const count = picker?.querySelector('.entry-image-count');
-    const label = picker?.querySelector('.entry-image-label');
-    if (picker) picker.title = pickerLabel;
-    if (count) {
-      count.hidden = false;
-      count.textContent = String(queuedFiles.length);
-    }
-    if (label) label.textContent = pickerLabel;
-  });
 }
 
 function renderLedgerImageButton(entry) {
@@ -1384,57 +1451,73 @@ function renderLedgerImageButton(entry) {
 }
 
 function renderLedgerImageViewer() {
-  const entry = ledgerEntryById(selectedLedgerImageEntryId);
-  if (!entry) {
-    selectedLedgerImageEntryId = '';
-    selectedLedgerImageIndex = 0;
+  const viewerEntryId = selectedLedgerImageEntryId;
+  const isNewEntryDraft = viewerEntryId === NEW_LEDGER_ENTRY_IMAGE_KEY;
+  const entry = isNewEntryDraft ? null : ledgerEntryById(viewerEntryId);
+
+  if (!isNewEntryDraft && !entry) {
+    closeLedgerImageViewer();
     return renderLedger();
   }
 
-  const images = ledgerImagesForEntry(entry.id);
-  const canManage = canManageEntry(entry);
-  const maxIndex = Math.max(0, images.length - 1);
-  const currentIndex = images.length
+  const viewerImages = ledgerViewerImages(viewerEntryId);
+  const canManage = isNewEntryDraft
+    ? true
+    : entry && canManageEntry(entry);
+  const maxIndex = Math.max(0, viewerImages.length - 1);
+  const currentIndex = viewerImages.length
     ? Math.min(Math.max(selectedLedgerImageIndex, 0), maxIndex)
     : 0;
   selectedLedgerImageIndex = currentIndex;
-  const currentImage = images[currentIndex] || null;
-  const creditor = userAlias(knownUserById(entry.creditorId));
-  const imageContext = entry.note
-    ? `${entry.note} · ${t('paidBy')} ${creditor}`
-    : `${t('paidBy')} ${creditor}`;
+  const currentImage = viewerImages[currentIndex] || null;
 
-  return `<section class="page-content narrow-content">
+  let imageContext;
+  if (isNewEntryDraft) {
+    const note = ledgerNewDraft?.note?.trim();
+    imageContext = note || t('newEntry');
+  } else {
+    const creditor = userAlias(knownUserById(entry.creditorId));
+    imageContext = entry.note
+      ? `${entry.note} · ${t('paidBy')} ${creditor}`
+      : `${t('paidBy')} ${creditor}`;
+  }
+
+  return `<section class="page-content narrow-content ledger-image-page">
     <div class="page-heading ledger-image-heading">
       <div>
         <h2>${escapeHtml(t('image'))}</h2>
         <p class="muted">${escapeHtml(imageContext)}</p>
       </div>
-      <button class="secondary-button" type="button" data-action="back-to-ledger">${escapeHtml(t('backToLedger'))}</button>
     </div>
     <section class="accounting-card ledger-image-view">
       ${currentImage
     ? `<div class="ledger-image-stage"><img src="${escapeHtml(currentImage.dataUrl)}" alt="${escapeHtml(t('ledgerImage'))}" /></div>`
     : `<p class="muted ledger-image-empty">${escapeHtml(t('noImagesYet'))}</p>`}
-      ${images.length > 0 ? `<div class="ledger-image-nav">
+      ${viewerImages.length > 0 ? `<div class="ledger-image-nav">
         <button class="secondary-button" type="button" data-action="ledger-image-prev"${currentIndex === 0 ? ' disabled' : ''}>${escapeHtml(t('previousImage'))}</button>
-        <span class="ledger-image-count">${escapeHtml(t('imagePosition', { current: currentIndex + 1, total: Math.max(images.length, 1) }))}</span>
+        <span class="ledger-image-count">${escapeHtml(t('imagePosition', { current: currentIndex + 1, total: Math.max(viewerImages.length, 1) }))}</span>
         <button class="secondary-button" type="button" data-action="ledger-image-next"${currentIndex >= maxIndex ? ' disabled' : ''}>${escapeHtml(t('nextImage'))}</button>
       </div>` : ''}
       ${canManage ? `<div class="ledger-image-actions">
-        <div class="ledger-image-picker">
-          <label class="file-picker">
-            <input class="sr-only" id="ledger-image-upload" name="imageUpload" type="file" accept="image/*" />
-            <span>${escapeHtml(t('uploadImage'))}</span>
-          </label>
-          <label class="file-picker">
-            <input class="sr-only" id="ledger-image-camera" name="imageCamera" type="file" accept="image/*" capture="environment" />
-            <span>${escapeHtml(t('takePhoto'))}</span>
-          </label>
-        </div>
-        ${currentImage ? `<button class="secondary-button danger-text" type="button" data-delete-ledger-image="${escapeHtml(currentImage.id)}">${escapeHtml(t('deleteImage'))}</button>` : ''}
+        <label class="file-picker ledger-image-action">
+          <input class="sr-only" id="ledger-image-upload" name="imageUpload" type="file" accept="image/*" multiple />
+          <span>${escapeHtml(t('uploadImage'))}</span>
+        </label>
+        <label class="file-picker ledger-image-action">
+          <input class="sr-only" id="ledger-image-camera" name="imageCamera" type="file" accept="image/*" capture="environment" />
+          <span>${escapeHtml(t('takePhoto'))}</span>
+        </label>
+        <button
+          class="secondary-button ledger-image-action danger-text"
+          type="button"
+          data-delete-ledger-image="${currentImage ? escapeHtml(currentImage.id) : ''}"
+          ${currentImage ? '' : 'disabled'}
+        >${escapeHtml(t('deleteImage'))}</button>
       </div>` : ''}
     </section>
+    <div class="ledger-image-footer">
+      <button class="secondary-button" type="button" data-action="back-from-ledger-image">${escapeHtml(ledgerImageBackLabel(viewerEntryId))}</button>
+    </div>
   </section>`;
 }
 
@@ -2548,13 +2631,12 @@ function bindLedgerRows() {
       ledgerEditDraft?.currency,
     );
   });
-  bindLedgerEntryImagePicker(ledgerEditForm, editingLedgerEntryId);
   document.querySelectorAll('[data-edit-entry]').forEach((button) => {
     button.onclick = () => {
       const entryId = button.dataset.editEntry;
       const entry = ledgerEntryById(entryId);
       if (!entry || !canManageEntry(entry)) return;
-      pendingLedgerEntryImages.delete(ledgerEntryImageKey(entryId));
+      revokePendingLedgerEntryImages(ledgerEntryImageKey(entryId));
       editingLedgerEntryId = entryId;
       ledgerEditDraft = createLedgerEditDraft(entry);
       selectedLedgerImageEntryId = '';
@@ -2565,7 +2647,7 @@ function bindLedgerRows() {
   });
   document.querySelectorAll('[data-cancel-edit-entry]').forEach((button) => {
     button.onclick = () => {
-      pendingLedgerEntryImages.delete(
+      revokePendingLedgerEntryImages(
         ledgerEntryImageKey(button.dataset.cancelEditEntry),
       );
       discardLedgerEditDraft();
@@ -2601,9 +2683,15 @@ function bindLedgerRows() {
   });
   document.querySelectorAll('[data-view-ledger-image]').forEach((button) => {
     button.onclick = () => {
+      const newEntryForm = button.closest('#ledger-form');
+      const editForm = button.closest('#ledger-edit-form');
+      if (newEntryForm) captureLedgerNewDraft(newEntryForm);
+      if (editForm) captureLedgerEditDraft(editForm);
       selectedLedgerImageEntryId = button.dataset.viewLedgerImage;
       selectedLedgerImageIndex = 0;
-      discardLedgerEditDraft();
+      if (!newEntryForm && !editForm) {
+        discardLedgerEditDraft();
+      }
       render();
     };
   });
@@ -2653,10 +2741,9 @@ function bind() {
   });
   document.querySelectorAll('[data-view]').forEach((button) => {
     button.onclick = () => {
-      pendingLedgerEntryImages.clear();
+      clearAllPendingLedgerEntryImages();
       activeView = button.dataset.view;
-      selectedLedgerImageEntryId = '';
-      selectedLedgerImageIndex = 0;
+      closeLedgerImageViewer();
       discardLedgerEditDraft();
       discardLedgerNewDraft();
       notice = '';
@@ -2700,7 +2787,6 @@ function bind() {
       button.dataset.removeNewSplit,
     );
   });
-  bindLedgerEntryImagePicker(ledgerForm);
   bindLedgerFilter();
   bindLedgerRows();
   document.querySelector('#currency-result-currency')?.addEventListener('change', (event) => {
@@ -2787,7 +2873,7 @@ function bind() {
       return;
     }
     if (event.target.closest('[data-action="ledger-image-next"]:not([disabled])')) {
-      const images = ledgerImagesForEntry(selectedLedgerImageEntryId);
+      const images = ledgerViewerImages(selectedLedgerImageEntryId);
       if (selectedLedgerImageIndex < images.length - 1) {
         selectedLedgerImageIndex += 1;
         render();
@@ -2795,22 +2881,26 @@ function bind() {
     }
   });
   document.querySelector('#ledger-image-upload')?.addEventListener('change', (event) => {
-    const file = event.currentTarget.files?.[0];
+    const files = event.currentTarget.files;
     event.currentTarget.value = '';
-    if (file) void addLedgerImage(selectedLedgerImageEntryId, file);
+    if (files?.length) void handleLedgerImageFiles(selectedLedgerImageEntryId, files);
   });
   document.querySelector('#ledger-image-camera')?.addEventListener('change', (event) => {
-    const file = event.currentTarget.files?.[0];
+    const files = event.currentTarget.files;
     event.currentTarget.value = '';
-    if (file) void addLedgerImage(selectedLedgerImageEntryId, file);
+    if (files?.length) void handleLedgerImageFiles(selectedLedgerImageEntryId, files);
   });
   document.querySelectorAll('[data-delete-ledger-image]').forEach((button) => {
-    button.onclick = () => removeLedgerImage(button.dataset.deleteLedgerImage);
+    button.onclick = () => removeViewerLedgerImage(button.dataset.deleteLedgerImage);
   });
-  document.querySelector('[data-action="back-to-ledger"]')?.addEventListener('click', () => {
-    selectedLedgerImageEntryId = '';
-    selectedLedgerImageIndex = 0;
-    activeView = 'ledger';
+  document.querySelector('[data-action="back-from-ledger-image"]')?.addEventListener('click', () => {
+    const wasNewEntry = selectedLedgerImageEntryId === NEW_LEDGER_ENTRY_IMAGE_KEY;
+    closeLedgerImageViewer();
+    if (wasNewEntry) {
+      activeView = 'add-entry';
+    } else if (!editingLedgerEntryId) {
+      activeView = 'ledger';
+    }
     render();
   });
   document.querySelector('[data-action="copy-share-url"]')?.addEventListener('click', copyShareUrl);
@@ -2857,8 +2947,13 @@ function bind() {
         showHelpGuide = false;
         render();
       } else if (selectedLedgerImageEntryId) {
-        selectedLedgerImageEntryId = '';
-        selectedLedgerImageIndex = 0;
+        const wasNewEntry = selectedLedgerImageEntryId === NEW_LEDGER_ENTRY_IMAGE_KEY;
+        closeLedgerImageViewer();
+        if (wasNewEntry) {
+          activeView = 'add-entry';
+        } else if (!editingLedgerEntryId) {
+          activeView = 'ledger';
+        }
         render();
       }
     }
@@ -3116,7 +3211,7 @@ async function addLedgerEntry(event) {
       try {
         imageDataUrls = await compressLedgerImageFiles(imageFiles);
       } catch (error) {
-        pendingLedgerEntryImages.delete(imageKey);
+        revokePendingLedgerEntryImages(imageKey);
         reportLedgerImageError(error);
         return;
       }
@@ -3161,7 +3256,7 @@ async function addLedgerEntry(event) {
     });
 
     await batch.commit();
-    pendingLedgerEntryImages.delete(imageKey);
+    revokePendingLedgerEntryImages(imageKey);
     discardLedgerNewDraft();
     activeView = 'ledger';
     setNotice(t('entryAdded'));
@@ -3265,7 +3360,7 @@ async function updateLedgerEntry(event) {
       try {
         imageDataUrls = await compressLedgerImageFiles(imageFiles);
       } catch (error) {
-        pendingLedgerEntryImages.delete(imageKey);
+        revokePendingLedgerEntryImages(imageKey);
         reportLedgerImageError(error);
         return;
       }
@@ -3326,7 +3421,7 @@ async function updateLedgerEntry(event) {
     });
 
     await batch.commit();
-    pendingLedgerEntryImages.delete(imageKey);
+    revokePendingLedgerEntryImages(imageKey);
     discardLedgerEditDraft();
     setNotice(t('entryUpdated'));
   } catch (error) {
@@ -3360,6 +3455,48 @@ async function addLedgerImage(entryId, file, entry = ledgerEntryById(entryId)) {
     reportLedgerImageError(error);
     return false;
   }
+}
+
+async function handleLedgerImageFiles(viewerEntryId, files) {
+  if (!viewerEntryId) return;
+  const fileList = Array.from(files || []).filter((file) => file.size > 0);
+  if (!fileList.length) return;
+
+  if (shouldUsePendingLedgerImages(viewerEntryId)) {
+    const pendingKey = ledgerImageViewerPendingKey(viewerEntryId);
+    if (!addPendingLedgerEntryImages(pendingKey, fileList)) return;
+    selectedLedgerImageIndex = ledgerViewerImages(viewerEntryId).length - 1;
+    setNotice(t('imageAdded'));
+    render();
+    return;
+  }
+
+  for (const file of fileList) {
+    const added = await addLedgerImage(viewerEntryId, file);
+    if (!added) break;
+  }
+}
+
+function removeViewerLedgerImage(imageId) {
+  const viewerEntryId = selectedLedgerImageEntryId;
+  if (!viewerEntryId || !imageId) return;
+
+  if (imageId.startsWith('pending:')) {
+    const pendingKey = ledgerImageViewerPendingKey(viewerEntryId);
+    const pendingIndex = Number(imageId.slice('pending:'.length));
+    if (!Number.isInteger(pendingIndex)) return;
+    if (!window.confirm(t('deleteImageConfirm'))) return;
+    if (!removePendingLedgerEntryImage(pendingKey, pendingIndex)) return;
+    const total = ledgerViewerImages(viewerEntryId).length;
+    if (selectedLedgerImageIndex >= total) {
+      selectedLedgerImageIndex = Math.max(0, total - 1);
+    }
+    setNotice(t('imageRemoved'));
+    render();
+    return;
+  }
+
+  void removeLedgerImage(imageId);
 }
 
 async function removeLedgerImage(imageId) {
@@ -4632,9 +4769,8 @@ async function clearAllLedgerData() {
     const debtsRemoved = await deleteCollectionDocuments('ledgerSplits');
     const imagesRemoved = await deleteCollectionDocuments('ledgerImages');
     const entriesRemoved = await deleteCollectionDocuments('ledger');
-    pendingLedgerEntryImages.clear();
-    selectedLedgerImageEntryId = '';
-    selectedLedgerImageIndex = 0;
+    clearAllPendingLedgerEntryImages();
+    closeLedgerImageViewer();
     discardLedgerEditDraft();
     setNotice(t('allLedgerDataCleared', {
       debts: debtsRemoved,
@@ -4680,13 +4816,12 @@ async function removeLedgerEntry(entryId) {
     await batch.commit();
 
     if (selectedLedgerImageEntryId === entryId) {
-      selectedLedgerImageEntryId = '';
-      selectedLedgerImageIndex = 0;
+      closeLedgerImageViewer();
     }
     if (editingLedgerEntryId === entryId) {
       discardLedgerEditDraft();
     }
-    pendingLedgerEntryImages.delete(ledgerEntryImageKey(entryId));
+    revokePendingLedgerEntryImages(ledgerEntryImageKey(entryId));
     setNotice(t('entryRemoved'));
   } catch (error) {
     reportError(error);
@@ -4790,7 +4925,7 @@ function watchActiveData() {
       editingLedgerEntryId
       && !ledgerEntries.some((entry) => entry.id === editingLedgerEntryId)
     ) {
-      pendingLedgerEntryImages.delete(
+      revokePendingLedgerEntryImages(
         ledgerEntryImageKey(editingLedgerEntryId),
       );
       discardLedgerEditDraft();
@@ -4828,23 +4963,29 @@ function watchActiveData() {
     });
 
     if (selectedLedgerImageEntryId) {
-      const entry = ledgerEntryById(selectedLedgerImageEntryId);
-      const images = ledgerImagesForEntry(selectedLedgerImageEntryId);
-      if (!entry || (!images.length && !canManageEntry(entry))) {
-        selectedLedgerImageEntryId = '';
-        selectedLedgerImageIndex = 0;
-        pendingLedgerImageFocus = null;
+      if (selectedLedgerImageEntryId === NEW_LEDGER_ENTRY_IMAGE_KEY) {
+        const viewerImages = ledgerViewerImages(selectedLedgerImageEntryId);
+        if (selectedLedgerImageIndex >= viewerImages.length) {
+          selectedLedgerImageIndex = Math.max(0, viewerImages.length - 1);
+        }
       } else {
-        if (pendingLedgerImageFocus?.entryId === selectedLedgerImageEntryId) {
-          const focusIndex = images.findIndex(
-            (image) => image.id === pendingLedgerImageFocus.imageId,
-          );
-          if (focusIndex !== -1) {
-            selectedLedgerImageIndex = focusIndex;
-            pendingLedgerImageFocus = null;
+        const entry = ledgerEntryById(selectedLedgerImageEntryId);
+        const viewerImages = ledgerViewerImages(selectedLedgerImageEntryId);
+        if (!entry || (!viewerImages.length && !canManageEntry(entry))) {
+          closeLedgerImageViewer();
+          pendingLedgerImageFocus = null;
+        } else {
+          if (pendingLedgerImageFocus?.entryId === selectedLedgerImageEntryId) {
+            const focusIndex = viewerImages.findIndex(
+              (image) => image.id === pendingLedgerImageFocus.imageId,
+            );
+            if (focusIndex !== -1) {
+              selectedLedgerImageIndex = focusIndex;
+              pendingLedgerImageFocus = null;
+            }
+          } else if (selectedLedgerImageIndex >= viewerImages.length) {
+            selectedLedgerImageIndex = Math.max(0, viewerImages.length - 1);
           }
-        } else if (selectedLedgerImageIndex >= images.length) {
-          selectedLedgerImageIndex = Math.max(0, images.length - 1);
         }
       }
     }
@@ -4888,7 +5029,7 @@ onAuthStateChanged(auth, (user) => {
   adminCurrencySettings = null;
   initialCurrencyRatesSeeded = false;
   pendingLedgerImageFocus = null;
-  pendingLedgerEntryImages.clear();
+  clearAllPendingLedgerEntryImages();
   backupStatus = '';
   backupStatusType = 'info';
   isBackupBusy = false;
