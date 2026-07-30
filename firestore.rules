@@ -266,9 +266,11 @@ service cloud.firestore {
     }
     function ledgerOwnedBefore(ledgerId) {
       return ledgerId is string
-        && exists(/databases/$(database)/documents/ledger/$(ledgerId))
-        && get(/databases/$(database)/documents/ledger/$(ledgerId)).data.createdBy
-          == request.auth.uid;
+        && (
+          !exists(/databases/$(database)/documents/ledger/$(ledgerId))
+          || get(/databases/$(database)/documents/ledger/$(ledgerId)).data.createdBy
+            == request.auth.uid
+        );
     }
     function ledgerManagedAfter(ledgerId) {
       return ledgerId is string
@@ -329,7 +331,8 @@ service cloud.firestore {
               'updatedAt'
             ])
           && validAlias(request.resource.data.alias)
-          && validUserCurrencySettings(request.resource.data));
+          && validUserCurrencySettings(request.resource.data)
+          && request.resource.data.updatedAt == request.time);
       allow delete: if admin()
         && request.auth.uid != userId
         && resource.data.role == 'user'
@@ -355,7 +358,17 @@ service cloud.firestore {
     match /settings/{settingId} {
       allow get: if signedIn();
       allow list: if false;
-      allow create, update, delete: if admin();
+      allow create, update: if admin()
+        && (
+          settingId != 'app'
+          || (
+            request.resource.data.keys().hasAll(['allowedCurrencies', 'defaultCurrency'])
+            && request.resource.data.allowedCurrencies is list
+            && request.resource.data.allowedCurrencies.size() > 0
+            && allowedCurrency(request.resource.data.defaultCurrency)
+          )
+        );
+      allow delete: if admin() && settingId != 'app';
     }
     match /ledger/{entryId} {
       allow read: if active();

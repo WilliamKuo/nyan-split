@@ -529,6 +529,15 @@ function selectableUserById(userId) {
   return selectableUsers.find((user) => user.id === userId) || null;
 }
 
+function activeAdminCount() {
+  const list = managedUsers.length ? managedUsers : knownUsers;
+  return list.filter((u) => (
+    u.role === 'admin'
+    && u.status === 'active'
+    && u.disabled !== true
+  )).length;
+}
+
 function userPhotoUrl(user) {
   const photoURL = user?.photoURL
     || (user?.uid === authUser?.uid ? authUser?.photoURL : '');
@@ -850,6 +859,38 @@ function calculateBalances() {
   return balances;
 }
 
+function calculateGreedySettlementPlan(balancesList) {
+  const debtors = balancesList
+    .filter((b) => b.amount < -SETTLEMENT_EPSILON)
+    .map((b) => ({ userId: b.userId, amount: Math.abs(b.amount) }))
+    .sort((a, b) => b.amount - a.amount);
+  const creditors = balancesList
+    .filter((b) => b.amount > SETTLEMENT_EPSILON)
+    .map((b) => ({ userId: b.userId, amount: b.amount }))
+    .sort((a, b) => b.amount - a.amount);
+
+  const settlements = [];
+  let d = 0;
+  let c = 0;
+  while (d < debtors.length && c < creditors.length) {
+    const debtor = debtors[d];
+    const creditor = creditors[c];
+    const transfer = Math.min(debtor.amount, creditor.amount);
+    if (transfer > SETTLEMENT_EPSILON) {
+      settlements.push({
+        amount: transfer,
+        debtorId: debtor.userId,
+        creditorId: creditor.userId,
+      });
+      debtor.amount -= transfer;
+      creditor.amount -= transfer;
+    }
+    if (debtor.amount <= SETTLEMENT_EPSILON) d += 1;
+    if (creditor.amount <= SETTLEMENT_EPSILON) c += 1;
+  }
+  return settlements;
+}
+
 function calculateSettlementPlan() {
   const balances = [...calculateBalances()]
     .filter(([, amount]) => Math.abs(amount) > SETTLEMENT_EPSILON)
@@ -857,9 +898,18 @@ function calculateSettlementPlan() {
       amount,
       userId,
     }));
+
+  if (balances.length > 8) {
+    return calculateGreedySettlementPlan(balances);
+  }
+
   let bestSettlements = null;
+  let steps = 0;
+  const MAX_STEPS = 10000;
 
   const settle = (settlements) => {
+    if (steps > MAX_STEPS) return;
+    steps += 1;
     if (bestSettlements && settlements.length >= bestSettlements.length) return;
 
     const unsettledIndex = balances.findIndex((balance) => (
@@ -921,7 +971,7 @@ function calculateSettlementPlan() {
   };
 
   settle([]);
-  return bestSettlements || [];
+  return bestSettlements || calculateGreedySettlementPlan(balances);
 }
 
 function calculateSuggestedTransfers() {
@@ -2782,18 +2832,20 @@ function bindLedgerFilter() {
 
 function bindLedgerRows() {
   const ledgerEditForm = document.querySelector('#ledger-edit-form');
-  ledgerEditForm?.addEventListener('submit', updateLedgerEntry);
-  ledgerEditForm?.addEventListener('input', () => {
-    captureLedgerEditDraft(ledgerEditForm);
-  });
-  ledgerEditForm?.addEventListener('change', () => {
-    captureLedgerEditDraft(ledgerEditForm);
-    updateLedgerSplitInheritedValues(
-      ledgerEditForm,
-      ledgerEditDraft?.creditorId,
-      ledgerEditDraft?.currency,
-    );
-  });
+  if (ledgerEditForm) {
+    ledgerEditForm.onsubmit = updateLedgerEntry;
+    ledgerEditForm.oninput = () => {
+      captureLedgerEditDraft(ledgerEditForm);
+    };
+    ledgerEditForm.onchange = () => {
+      captureLedgerEditDraft(ledgerEditForm);
+      updateLedgerSplitInheritedValues(
+        ledgerEditForm,
+        ledgerEditDraft?.creditorId,
+        ledgerEditDraft?.currency,
+      );
+    };
+  }
   document.querySelectorAll('[data-edit-entry]').forEach((button) => {
     button.onclick = () => {
       const entryId = button.dataset.editEntry;
@@ -3639,8 +3691,12 @@ async function handleLedgerImageFiles(viewerEntryId, files) {
   }
 
   for (const file of fileList) {
-    const added = await addLedgerImage(viewerEntryId, file);
-    if (!added) break;
+    try {
+      const added = await addLedgerImage(viewerEntryId, file);
+      if (!added) break;
+    } catch (error) {
+      reportLedgerImageError(error);
+    }
   }
 }
 
@@ -3809,6 +3865,10 @@ async function updateUserStatus(userId, status) {
     ) {
       return;
     }
+    if (status === 'rejected' && user.role === 'admin' && activeAdminCount() <= 1) {
+      setErrorNotice(t('atLeastOneAdminRequired'));
+      return;
+    }
     await updateDoc(doc(db, 'users', userId), {
       ...(status === 'active' ? { disabled: false } : {}),
       status,
@@ -3835,6 +3895,10 @@ async function updateUserRole(userId, role) {
     ].includes(role)
     || user.role === role
   ) {
+    return;
+  }
+  if (role === 'user' && user.role === 'admin' && activeAdminCount() <= 1) {
+    setErrorNotice(t('atLeastOneAdminRequired'));
     return;
   }
   if (role === 'admin' && !userHasVerifiedGoogleIdentity(userId)) {
@@ -3886,6 +3950,10 @@ async function updateUserDisabled(userId, disabled) {
   ) {
     return;
   }
+  if (disabled && user.role === 'admin' && activeAdminCount() <= 1) {
+    setErrorNotice(t('atLeastOneAdminRequired'));
+    return;
+  }
   if (disabled && !window.confirm(t('disableUserConfirm', {
     name: userAlias(user),
   }))) {
@@ -3906,6 +3974,10 @@ async function updateUserDisabled(userId, disabled) {
 async function removeUser(userId) {
   const user = managedUsers.find((item) => item.id === userId);
   if (!currentUserIsAdmin() || !user || userId === profile.uid) return;
+  if (user.role === 'admin' && user.status === 'active' && !user.disabled && activeAdminCount() <= 1) {
+    setErrorNotice(t('atLeastOneAdminRequired'));
+    return;
+  }
   if (!window.confirm(t('removeUserConfirm', { name: userAlias(user) }))) return;
 
   try {
