@@ -45,6 +45,9 @@ const IMAGE_MIN_DIMENSION = 480;
 const IMAGE_MAX_BYTES = 500 * 1024;
 const BATCH_DELETE_LIMIT = 400;
 const MAX_LEDGER_SPLITS = 12;
+const MAX_LEDGER_NOTE_LENGTH = 12;
+const MAX_LEDGER_AMOUNT_INTEGER_DIGITS = 10;
+const MAX_LEDGER_AMOUNT = 10 ** MAX_LEDGER_AMOUNT_INTEGER_DIGITS - 0.01;
 const NEW_LEDGER_ENTRY_IMAGE_KEY = 'new-entry';
 const GOOGLE_PROVIDER_ID = 'google.com';
 const BACKUP_FORMAT = 'nyan-split-ledger-backup';
@@ -227,6 +230,27 @@ function cleanAlias(value) {
 function normalizeCurrency(value) {
   const currency = String(value ?? '').trim().toUpperCase();
   return /^[A-Z]{3}$/.test(currency) ? currency : '';
+}
+
+function ledgerNoteCharacterCount(note) {
+  return [...String(note || '')].length;
+}
+
+function normalizeLedgerNote(note) {
+  const trimmed = String(note || '').trim();
+  return [...trimmed].slice(0, MAX_LEDGER_NOTE_LENGTH).join('');
+}
+
+function ledgerAmountIntegerDigitCount(amount) {
+  const value = Math.trunc(Math.abs(Number(amount)));
+  if (!Number.isFinite(value) || value === 0) return 0;
+  return value.toString().length;
+}
+
+function isValidLedgerAmount(amount) {
+  const value = Number(amount);
+  if (!Number.isFinite(value) || value <= 0) return false;
+  return ledgerAmountIntegerDigitCount(value) <= MAX_LEDGER_AMOUNT_INTEGER_DIGITS;
 }
 
 function normalizeAllowedCurrencies(currencies) {
@@ -588,7 +612,6 @@ function renderAllowedCurrencyChips(currencies, defaultCurrency) {
 
 function renderRegistration() {
   root.innerHTML = authFrame(`
-    <p class="eyebrow">NyanSplit</p>
     <h2>${escapeHtml(t('registration'))}</h2>
     <p class="muted">${escapeHtml(t('aliasHelp'))}</p>
     <form id="registration-form" class="stack-form">
@@ -1384,7 +1407,6 @@ function renderLedgerImageViewer() {
   return `<section class="page-content narrow-content">
     <div class="page-heading ledger-image-heading">
       <div>
-        <p class="eyebrow">${escapeHtml(t('ledger'))}</p>
         <h2>${escapeHtml(t('image'))}</h2>
         <p class="muted">${escapeHtml(imageContext)}</p>
       </div>
@@ -1588,6 +1610,7 @@ function renderLedgerEntryEdit(entry) {
               name="amount"
               type="number"
               min="0.01"
+              max="${MAX_LEDGER_AMOUNT}"
               step="0.01"
               inputmode="decimal"
               value="${escapeHtml(split.amount)}"
@@ -1621,7 +1644,7 @@ function renderLedgerEntryEdit(entry) {
   return `<article class="ledger-group ledger-group-editing">
     <form id="ledger-edit-form" class="entry-form ledger-edit-form">
       <div class="entry-note-row">
-        <label class="field"><span>${escapeHtml(t('note'))}</span><input name="note" maxlength="160" value="${escapeHtml(ledgerEditDraft.note)}" placeholder="${escapeHtml(t('notePlaceholder'))}" /></label>
+        <label class="field"><span>${escapeHtml(t('note'))}</span><input name="note" maxlength="${MAX_LEDGER_NOTE_LENGTH}" value="${escapeHtml(ledgerEditDraft.note)}" placeholder="${escapeHtml(t('notePlaceholder'))}" /></label>
         ${renderLedgerEntryImagePicker(entry.id)}
       </div>
       <div class="entry-shared-fields ledger-edit-shared-fields">
@@ -1813,6 +1836,7 @@ function renderNewEntry() {
               name="amount"
               type="number"
               min="0.01"
+              max="${MAX_LEDGER_AMOUNT}"
               step="0.01"
               inputmode="decimal"
               value="${escapeHtml(split.amount)}"
@@ -1840,7 +1864,6 @@ function renderNewEntry() {
   return `<section class="page-content narrow-content">
     <div class="page-heading">
       <div>
-        <p class="eyebrow">NyanSplit</p>
         <h2>${escapeHtml(t('newEntry'))}</h2>
         <p class="muted">${escapeHtml(t('newEntryCurrency', { currency: entryCurrency }))}</p>
       </div>
@@ -1849,7 +1872,7 @@ function renderNewEntry() {
     <section class="accounting-card">
       ${canAddEntry ? `<form id="ledger-form" class="entry-form new-entry-form">
         <div class="entry-note-row">
-          <label class="field"><span>${escapeHtml(t('note'))}</span><input name="note" maxlength="160" value="${escapeHtml(draft.note)}" placeholder="${escapeHtml(t('notePlaceholder'))}" /></label>
+          <label class="field"><span>${escapeHtml(t('note'))}</span><input name="note" maxlength="${MAX_LEDGER_NOTE_LENGTH}" value="${escapeHtml(draft.note)}" placeholder="${escapeHtml(t('notePlaceholder'))}" /></label>
           ${renderLedgerEntryImagePicker()}
         </div>
         <div class="entry-details-row new-entry-layout">
@@ -1890,7 +1913,6 @@ function renderConversion() {
   return `<section class="page-content narrow-content">
     <div class="page-heading">
       <div>
-        <p class="eyebrow">NyanSplit</p>
         <h2>${escapeHtml(t('conversionSettings'))}</h2>
         <p class="muted">${escapeHtml(t('conversionSettingsHelp'))}</p>
       </div>
@@ -1912,14 +1934,12 @@ function renderLedger() {
   return `<section class="page-content">
     <div class="page-heading">
       <div>
-        <p class="eyebrow">${escapeHtml(t('ledger'))}</p>
         <h2>${escapeHtml(t('accounting'))}</h2>
         <p class="muted">${escapeHtml(t('ledgerHelp'))}</p>
       </div>
     </div>
 
     <section class="accounting-card ledger-card">
-      <div class="card-heading"><div><h3>${escapeHtml(t('ledger'))}</h3><p>${escapeHtml(t('ledgerHelp'))}</p></div></div>
       <div class="ledger-filter-row">
         <label class="field ledger-filter">
           <span class="sr-only">${escapeHtml(t('ledgerSearch'))}</span>
@@ -1945,7 +1965,7 @@ function renderAccount() {
   ` : '';
 
   return `<section class="page-content narrow-content">
-    <div class="page-heading"><div><p class="eyebrow">NyanSplit</p><h2>${escapeHtml(t('account'))}</h2></div></div>
+    <div class="page-heading"><div><h2>${escapeHtml(t('account'))}</h2></div></div>
     <section class="accounting-card">
       <form id="account-form" class="stack-form">
         <label class="field"><span>${escapeHtml(t('alias'))}</span><input name="alias" maxlength="40" value="${escapeHtml(userAlias(profile))}" required /></label>
@@ -1985,7 +2005,7 @@ function renderInstallPanel() {
 function renderShare() {
   const url = shareUrl();
   return `<section class="page-content narrow-content">
-    <div class="page-heading"><div><p class="eyebrow">NyanSplit</p><h2>${escapeHtml(t('shareInstall'))}</h2></div></div>
+    <div class="page-heading"><div><h2>${escapeHtml(t('shareInstall'))}</h2></div></div>
     <section class="accounting-card share-card">
       <div class="card-heading"><div><h3>${escapeHtml(t('shareHeading'))}</h3><p>${escapeHtml(t('shareHelp'))}</p></div></div>
       <div class="share-url-row">
@@ -2454,7 +2474,6 @@ function renderApplication() {
 function render() {
   if (!authUser) {
     root.innerHTML = authFrame(`
-      <p class="eyebrow">NyanSplit</p>
       <h2>${escapeHtml(t('loginHeading'))}</h2>
       <p class="muted">${escapeHtml(t('loginHelp'))}</p>
       <button class="google-login-button" type="button" data-action="login">
@@ -3024,7 +3043,7 @@ async function addLedgerEntry(event) {
 
     const creditorId = String(ledgerNewDraft.creditorId || '');
     const currency = normalizeCurrency(ledgerNewDraft.currency);
-    const note = ledgerNewDraft.note.trim().slice(0, 160);
+    const note = String(ledgerNewDraft.note || '').trim();
     const normalizedSplits = ledgerNewDraft.splits.map((split) => ({
       amount: Number(split.amount),
       debtorId: String(split.debtorId || ''),
@@ -3058,6 +3077,10 @@ async function addLedgerEntry(event) {
       setErrorNotice(t('ledgerParticipantUnavailable'));
       return;
     }
+    if (ledgerNoteCharacterCount(note) > MAX_LEDGER_NOTE_LENGTH) {
+      setErrorNotice(t('noteTooLong', { max: MAX_LEDGER_NOTE_LENGTH }));
+      return;
+    }
     if (normalizedSplits.some((split) => (
       !Number.isFinite(split.amount)
       || split.amount <= 0
@@ -3065,6 +3088,11 @@ async function addLedgerEntry(event) {
       setErrorNotice(t('amountPositive'));
       return;
     }
+    if (normalizedSplits.some((split) => !isValidLedgerAmount(split.amount))) {
+      setErrorNotice(t('amountTooLarge', { max: MAX_LEDGER_AMOUNT_INTEGER_DIGITS }));
+      return;
+    }
+    const normalizedNote = normalizeLedgerNote(note);
     const debtorIds = normalizedSplits.map((split) => split.debtorId);
     if (new Set(debtorIds).size !== debtorIds.length) {
       setErrorNotice(t('duplicateDebtor'));
@@ -3101,7 +3129,7 @@ async function addLedgerEntry(event) {
       createdAt: serverTimestamp(),
       createdBy: profile.uid,
       currency,
-      note,
+      note: normalizedNote,
       updatedAt: serverTimestamp(),
     });
 
@@ -3154,7 +3182,7 @@ async function updateLedgerEntry(event) {
 
     captureLedgerEditDraft(event.currentTarget);
     const currency = normalizeCurrency(ledgerEditDraft.currency);
-    const note = ledgerEditDraft.note.trim().slice(0, 160);
+    const note = String(ledgerEditDraft.note || '').trim();
     const originalSplitIds = new Set(ledgerEditDraft.originalSplitIds);
     const normalizedSplits = ledgerEditDraft.splits.map((split) => {
       const debtorId = String(split.debtorId || '');
@@ -3198,6 +3226,10 @@ async function updateLedgerEntry(event) {
       setErrorNotice(t('ledgerParticipantUnavailable'));
       return;
     }
+    if (ledgerNoteCharacterCount(note) > MAX_LEDGER_NOTE_LENGTH) {
+      setErrorNotice(t('noteTooLong', { max: MAX_LEDGER_NOTE_LENGTH }));
+      return;
+    }
     if (normalizedSplits.some((split) => (
       !Number.isFinite(split.amount)
       || split.amount <= 0
@@ -3205,6 +3237,11 @@ async function updateLedgerEntry(event) {
       setErrorNotice(t('amountPositive'));
       return;
     }
+    if (normalizedSplits.some((split) => !isValidLedgerAmount(split.amount))) {
+      setErrorNotice(t('amountTooLarge', { max: MAX_LEDGER_AMOUNT_INTEGER_DIGITS }));
+      return;
+    }
+    const normalizedNote = normalizeLedgerNote(note);
     const debtorIds = normalizedSplits.map((split) => split.debtorId);
     if (new Set(debtorIds).size !== debtorIds.length) {
       setErrorNotice(t('duplicateDebtor'));
@@ -3237,7 +3274,7 @@ async function updateLedgerEntry(event) {
     const batch = writeBatch(db);
     batch.update(doc(db, 'ledger', entry.id), {
       currency,
-      note,
+      note: normalizedNote,
       updatedAt: serverTimestamp(),
     });
 
@@ -3941,7 +3978,7 @@ function normalizeBackupLedgerRecord(
     id,
     true,
   );
-  if (note.length > 160) {
+  if (ledgerNoteCharacterCount(note) > MAX_LEDGER_NOTE_LENGTH) {
     invalidBackupRecord(collectionName, id, 'note');
   }
   if (rawCurrency !== currency) {
@@ -4008,6 +4045,7 @@ function normalizeBackupSplitRecord(
     || typeof record.amount !== 'number'
     || !Number.isFinite(record.amount)
     || record.amount <= 0
+    || !isValidLedgerAmount(record.amount)
     || typeof record.cleared !== 'boolean'
     || !Number.isInteger(record.position)
     || record.position < 0

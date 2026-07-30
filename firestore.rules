@@ -197,7 +197,7 @@ service cloud.firestore {
         && data.creditorId is string
         && allowedCurrency(data.currency)
         && data.note is string
-        && data.note.size() <= 160
+        && data.note.size() <= 12
         && (
           (
             data.createdBy == request.auth.uid
@@ -225,7 +225,7 @@ service cloud.firestore {
         )
         && allowedCurrency(data.currency)
         && data.note is string
-        && data.note.size() <= 160
+        && data.note.size() <= 12
         && data.updatedAt == request.time
         && data.diff(existingData).affectedKeys().hasOnly([
           'currency',
@@ -253,9 +253,13 @@ service cloud.firestore {
           'updatedAt'
         ]);
     }
+    function validLedgerAmount(amount) {
+      return amount is number
+        && amount > 0
+        && amount < 10000000000;
+    }
     function validLedgerSplitValues(data) {
-      return data.amount is number
-        && data.amount > 0
+      return validLedgerAmount(data.amount)
         && data.cleared is bool
         && data.position is int
         && data.position >= 0;
