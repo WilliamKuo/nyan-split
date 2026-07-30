@@ -716,15 +716,8 @@ input[readonly] {
   min-width: 0;
 }
 
-.entry-amount-field input[type="number"] {
-  appearance: textfield;
-  -moz-appearance: textfield;
-}
-
-.entry-amount-field input[type="number"]::-webkit-inner-spin-button,
-.entry-amount-field input[type="number"]::-webkit-outer-spin-button {
-  margin: 0;
-  -webkit-appearance: none;
+.entry-amount-field input[name="amount"] {
+  font-variant-numeric: tabular-nums;
 }
 
 .ledger-entry-section {

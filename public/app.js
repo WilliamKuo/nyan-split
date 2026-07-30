@@ -253,6 +253,173 @@ function isValidLedgerAmount(amount) {
   return ledgerAmountIntegerDigitCount(value) <= MAX_LEDGER_AMOUNT_INTEGER_DIGITS;
 }
 
+const LEDGER_AMOUNT_EXPRESSION_PATTERN = /^[\d+\-*/().\s]+$/;
+
+function tokenizeLedgerAmountExpression(expression) {
+  const tokens = [];
+  let index = 0;
+  while (index < expression.length) {
+    const char = expression[index];
+    if (/\s/.test(char)) {
+      index += 1;
+      continue;
+    }
+    if ('+-*/()'.includes(char)) {
+      tokens.push(char);
+      index += 1;
+      continue;
+    }
+    if (/\d/.test(char) || char === '.') {
+      let number = '';
+      while (index < expression.length && /[\d.]/.test(expression[index])) {
+        number += expression[index];
+        index += 1;
+      }
+      if (!/^\d+(\.\d+)?$/.test(number) && !/^\.\d+$/.test(number)) return null;
+      tokens.push(Number(number));
+      continue;
+    }
+    return null;
+  }
+  return tokens;
+}
+
+function evaluateLedgerAmountExpression(expression) {
+  const trimmed = String(expression || '').trim();
+  if (!trimmed || !LEDGER_AMOUNT_EXPRESSION_PATTERN.test(trimmed)) return null;
+
+  const tokens = tokenizeLedgerAmountExpression(trimmed);
+  if (!tokens?.length) return null;
+
+  let position = 0;
+
+  const peek = () => tokens[position];
+  const consume = () => tokens[position++];
+
+  const parsePrimary = () => {
+    const token = peek();
+    if (token === '(') {
+      consume();
+      const value = parseExpression();
+      if (consume() !== ')') throw new Error('syntax');
+      return value;
+    }
+    if (typeof token === 'number') {
+      consume();
+      return token;
+    }
+    throw new Error('syntax');
+  };
+
+  const parseUnary = () => {
+    if (peek() === '+') {
+      consume();
+      return parseUnary();
+    }
+    if (peek() === '-') {
+      consume();
+      return -parseUnary();
+    }
+    return parsePrimary();
+  };
+
+  const parseTerm = () => {
+    let value = parseUnary();
+    while (peek() === '*' || peek() === '/') {
+      const operator = consume();
+      const right = parseUnary();
+      if (operator === '/') {
+        if (right === 0) throw new Error('divide-by-zero');
+        value /= right;
+      } else {
+        value *= right;
+      }
+    }
+    return value;
+  };
+
+  function parseExpression() {
+    let value = parseTerm();
+    while (peek() === '+' || peek() === '-') {
+      const operator = consume();
+      const right = parseTerm();
+      value = operator === '+' ? value + right : value - right;
+    }
+    return value;
+  }
+
+  try {
+    const result = parseExpression();
+    if (position !== tokens.length || !Number.isFinite(result)) return null;
+    return result;
+  } catch {
+    return null;
+  }
+}
+
+function parseLedgerAmountInput(raw) {
+  const trimmed = String(raw || '').trim();
+  if (!trimmed) return null;
+  return evaluateLedgerAmountExpression(trimmed);
+}
+
+function roundLedgerAmount(value) {
+  return Math.round(value * 100) / 100;
+}
+
+function formatParsedLedgerAmount(value) {
+  return roundLedgerAmount(value).toFixed(2).replace(/\.?0+$/, '');
+}
+
+function resolveLedgerAmountInput(raw) {
+  const parsed = parseLedgerAmountInput(raw);
+  return parsed === null ? NaN : roundLedgerAmount(parsed);
+}
+
+function normalizeLedgerAmountField(input) {
+  if (!(input instanceof HTMLInputElement)) return;
+
+  const previous = input.dataset.ledgerAmountPrevious ?? input.value;
+  const trimmed = String(input.value || '').trim();
+  if (!trimmed) {
+    input.value = previous;
+    return;
+  }
+
+  const parsed = parseLedgerAmountInput(trimmed);
+  const rounded = parsed === null ? null : roundLedgerAmount(parsed);
+  if (rounded === null || !isValidLedgerAmount(rounded)) {
+    input.value = previous;
+    return;
+  }
+
+  const formatted = formatParsedLedgerAmount(rounded);
+  input.value = formatted;
+  input.dataset.ledgerAmountPrevious = formatted;
+}
+
+function normalizeLedgerFormAmountFields(form) {
+  form?.querySelectorAll('.entry-amount-field [name="amount"]').forEach((input) => {
+    normalizeLedgerAmountField(input);
+  });
+}
+
+function bindLedgerAmountInputs(root = document) {
+  root?.querySelectorAll('.entry-amount-field [name="amount"]').forEach((input) => {
+    if (input.dataset.ledgerAmountBound === '1') return;
+    input.dataset.ledgerAmountBound = '1';
+    input.addEventListener('focus', () => {
+      input.dataset.ledgerAmountPrevious = input.value;
+    });
+    input.addEventListener('blur', () => {
+      normalizeLedgerAmountField(input);
+      const form = input.closest('form');
+      if (form?.id === 'ledger-form') captureLedgerNewDraft(form);
+      if (form?.id === 'ledger-edit-form') captureLedgerEditDraft(form);
+    });
+  });
+}
+
 function normalizeAllowedCurrencies(currencies) {
   const knownCurrencies = new Set();
   return (Array.isArray(currencies) ? currencies : []).reduce((result, currency) => {
@@ -1691,11 +1858,9 @@ function renderLedgerEntryEdit(entry) {
             <span class="entry-split-label">${escapeHtml(t('amount'))}</span>
             <input
               name="amount"
-              type="number"
-              min="0.01"
-              max="${MAX_LEDGER_AMOUNT}"
-              step="0.01"
+              type="text"
               inputmode="decimal"
+              autocomplete="off"
               value="${escapeHtml(split.amount)}"
               required
             />
@@ -1917,11 +2082,9 @@ function renderNewEntry() {
             <span class="entry-split-label">${escapeHtml(t('amount'))}</span>
             <input
               name="amount"
-              type="number"
-              min="0.01"
-              max="${MAX_LEDGER_AMOUNT}"
-              step="0.01"
+              type="text"
               inputmode="decimal"
+              autocomplete="off"
               value="${escapeHtml(split.amount)}"
               required
             />
@@ -2712,6 +2875,7 @@ function bindLedgerRows() {
       button.textContent = expanded ? '▼' : '▶';
     };
   });
+  bindLedgerAmountInputs(ledgerEditForm);
 }
 
 function bind() {
@@ -2787,6 +2951,7 @@ function bind() {
       button.dataset.removeNewSplit,
     );
   });
+  bindLedgerAmountInputs(ledgerForm);
   bindLedgerFilter();
   bindLedgerRows();
   document.querySelector('#currency-result-currency')?.addEventListener('change', (event) => {
@@ -3133,6 +3298,7 @@ async function addLedgerEntry(event) {
   event.preventDefault();
   const formElement = event.currentTarget;
   try {
+    normalizeLedgerFormAmountFields(formElement);
     captureLedgerNewDraft(formElement);
     if (!ledgerNewDraft) return;
 
@@ -3140,7 +3306,7 @@ async function addLedgerEntry(event) {
     const currency = normalizeCurrency(ledgerNewDraft.currency);
     const note = String(ledgerNewDraft.note || '').trim();
     const normalizedSplits = ledgerNewDraft.splits.map((split) => ({
-      amount: Number(split.amount),
+      amount: resolveLedgerAmountInput(split.amount),
       debtorId: String(split.debtorId || ''),
     }));
     const imageKey = ledgerEntryImageKey();
@@ -3275,6 +3441,7 @@ async function updateLedgerEntry(event) {
       || ledgerEditDraft?.entryId !== entry.id
     ) return;
 
+    normalizeLedgerFormAmountFields(event.currentTarget);
     captureLedgerEditDraft(event.currentTarget);
     const currency = normalizeCurrency(ledgerEditDraft.currency);
     const note = String(ledgerEditDraft.note || '').trim();
@@ -3284,7 +3451,7 @@ async function updateLedgerEntry(event) {
       const expectedSplitId = ledgerSplitDocumentId(entry.id, debtorId);
       return {
         ...split,
-        amount: Number(split.amount),
+        amount: resolveLedgerAmountInput(split.amount),
         debtorId,
         id: split.id || (originalSplitIds.has(expectedSplitId)
           ? expectedSplitId
