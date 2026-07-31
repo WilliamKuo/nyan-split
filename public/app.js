@@ -1,9 +1,12 @@
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js';
 import {
   GoogleAuthProvider,
+  browserLocalPersistence,
   getAuth,
   onAuthStateChanged,
+  setPersistence,
   signInWithPopup,
+  signInWithRedirect,
   signOut,
 } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js';
 import {
@@ -2930,9 +2933,46 @@ function bindLedgerRows() {
   bindLedgerAmountInputs(ledgerEditForm);
 }
 
+function prefersRedirectLogin() {
+  const ua = navigator.userAgent || '';
+  const isIOS = /iPad|iPhone|iPod/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
+  const isStandalone = (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || window.navigator.standalone === true;
+  const isInApp = /(FBAN|FBAV|Instagram|Line\/|MicroMessenger)/i.test(ua);
+  return isIOS || isStandalone || isInApp;
+}
+
+async function startGoogleLogin() {
+  try {
+    await setPersistence(auth, browserLocalPersistence);
+  } catch (e) {
+    console.warn('Failed to set auth persistence:', e);
+  }
+
+  if (prefersRedirectLogin()) {
+    return signInWithRedirect(auth, google);
+  }
+
+  try {
+    return await signInWithPopup(auth, google);
+  } catch (e) {
+    const code = e?.code || '';
+    if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
+      return null;
+    }
+    if (
+      code === 'auth/popup-blocked' ||
+      code === 'auth/operation-not-supported-in-this-environment' ||
+      code === 'auth/web-storage-unsupported'
+    ) {
+      return signInWithRedirect(auth, google);
+    }
+    throw e;
+  }
+}
+
 function bind() {
   document.querySelectorAll('[data-action="login"]').forEach((button) => {
-    button.onclick = () => signInWithPopup(auth, google).catch(reportError);
+    button.onclick = () => startGoogleLogin().catch(reportError);
   });
   document.querySelectorAll('[data-action="signout"]').forEach((button) => {
     button.onclick = () => signOut(auth).catch(reportError);
