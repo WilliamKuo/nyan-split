@@ -2807,6 +2807,303 @@ function render() {
   renderApplication();
 }
 
+let isNavigatingHistory = false;
+let pendingNavigationTarget = null;
+
+function safeHistoryBack() {
+  if (isNavigatingHistory) return;
+  isNavigatingHistory = true;
+  history.back();
+  window.setTimeout(() => {
+    isNavigatingHistory = false;
+  }, 300);
+}
+
+function safeHistoryGo(delta) {
+  if (!delta) return;
+  if (isNavigatingHistory && !pendingNavigationTarget) return;
+  isNavigatingHistory = true;
+  history.go(delta);
+  window.setTimeout(() => {
+    isNavigatingHistory = false;
+  }, 300);
+}
+
+function applyHistoryState(state) {
+  const nextState = state || {
+    view: 'ledger',
+    editingId: '',
+    imageViewerId: '',
+    showHelp: false,
+    depth: 0,
+  };
+
+  if (!state) {
+    history.replaceState(nextState, '');
+  }
+
+  const prevEditingId = editingLedgerEntryId;
+  const prevImageViewerId = selectedLedgerImageEntryId;
+  const prevView = activeView;
+
+  if (prevImageViewerId && !nextState.imageViewerId) {
+    closeLedgerImageViewer();
+  }
+
+  if (prevEditingId && !nextState.editingId) {
+    revokePendingLedgerEntryImages(ledgerEntryImageKey(prevEditingId));
+    discardLedgerEditDraft();
+  }
+
+  if (prevView === 'add-entry' && nextState.view !== 'add-entry') {
+    revokePendingLedgerEntryImages(ledgerEntryImageKey(NEW_LEDGER_ENTRY_IMAGE_KEY));
+    discardLedgerNewDraft();
+  }
+
+  activeView = nextState.view || 'ledger';
+  editingLedgerEntryId = nextState.editingId || '';
+  selectedLedgerImageEntryId = nextState.imageViewerId || '';
+  showHelpGuide = Boolean(nextState.showHelp);
+
+  if (editingLedgerEntryId) {
+    const entry = ledgerEntryById(editingLedgerEntryId);
+    if (entry && canManageEntry(entry)) {
+      if (!ledgerEditDraft || ledgerEditDraft.entryId !== editingLedgerEntryId) {
+        ledgerEditDraft = createLedgerEditDraft(entry);
+      }
+    } else {
+      editingLedgerEntryId = '';
+      if (history.state?.depth > 0) {
+        safeHistoryGo(-history.state.depth);
+        return;
+      }
+    }
+  }
+
+  if (selectedLedgerImageEntryId && selectedLedgerImageEntryId !== NEW_LEDGER_ENTRY_IMAGE_KEY) {
+    const entry = ledgerEntryById(selectedLedgerImageEntryId);
+    if (!entry) {
+      closeLedgerImageViewer();
+      if (history.state?.depth > 0) {
+        safeHistoryGo(-history.state.depth);
+        return;
+      }
+    }
+  }
+
+  render();
+}
+
+function navigateToView(targetView) {
+  if (targetView === activeView) {
+    if (showHelpGuide) {
+      closeHelpGuide();
+      return;
+    }
+    if (selectedLedgerImageEntryId) {
+      requestCloseLedgerImageViewer();
+      return;
+    }
+    if (editingLedgerEntryId) {
+      cancelLedgerEntryEdit(editingLedgerEntryId);
+      return;
+    }
+    return;
+  }
+
+  clearAllPendingLedgerEntryImages();
+  closeLedgerImageViewer();
+  discardLedgerEditDraft();
+  discardLedgerNewDraft();
+  showHelpGuide = false;
+  notice = '';
+
+  const currentDepth = typeof history.state?.depth === 'number' ? history.state.depth : 0;
+
+  if (targetView === 'ledger') {
+    pendingNavigationTarget = null;
+    if (currentDepth > 0) {
+      safeHistoryGo(-currentDepth);
+      return;
+    }
+    activeView = 'ledger';
+    history.replaceState({
+      view: 'ledger',
+      editingId: '',
+      imageViewerId: '',
+      showHelp: false,
+      depth: 0,
+    }, '');
+    render();
+    return;
+  }
+
+  if (currentDepth === 0) {
+    history.pushState({
+      view: targetView,
+      editingId: '',
+      imageViewerId: '',
+      showHelp: false,
+      depth: 1,
+    }, '');
+    activeView = targetView;
+    render();
+    return;
+  }
+
+  if (currentDepth === 1 && !editingLedgerEntryId && !showHelpGuide && !selectedLedgerImageEntryId) {
+    history.replaceState({
+      view: targetView,
+      editingId: '',
+      imageViewerId: '',
+      showHelp: false,
+      depth: 1,
+    }, '');
+    activeView = targetView;
+    render();
+    return;
+  }
+
+  pendingNavigationTarget = targetView;
+  safeHistoryGo(-currentDepth);
+}
+
+function openLedgerImageViewer(entryId, newEntryForm, editForm) {
+  if (newEntryForm) captureLedgerNewDraft(newEntryForm);
+  if (editForm) captureLedgerEditDraft(editForm);
+  if (!newEntryForm && !editForm) {
+    discardLedgerEditDraft();
+  }
+
+  selectedLedgerImageEntryId = entryId;
+  selectedLedgerImageIndex = 0;
+
+  const currentDepth = typeof history.state?.depth === 'number' ? history.state.depth : 0;
+  history.pushState({
+    view: activeView,
+    editingId: editingLedgerEntryId,
+    imageViewerId: entryId,
+    showHelp: showHelpGuide,
+    depth: currentDepth + 1,
+  }, '');
+
+  render();
+}
+
+function requestCloseLedgerImageViewer() {
+  if (history.state?.imageViewerId) {
+    safeHistoryBack();
+  } else {
+    const wasNewEntry = selectedLedgerImageEntryId === NEW_LEDGER_ENTRY_IMAGE_KEY;
+    closeLedgerImageViewer();
+    if (wasNewEntry) {
+      activeView = 'add-entry';
+    } else if (!editingLedgerEntryId) {
+      activeView = 'ledger';
+    }
+    render();
+  }
+}
+
+function openLedgerEntryEdit(entryId) {
+  const entry = ledgerEntryById(entryId);
+  if (!entry || !canManageEntry(entry)) return;
+  revokePendingLedgerEntryImages(ledgerEntryImageKey(entryId));
+  editingLedgerEntryId = entryId;
+  ledgerEditDraft = createLedgerEditDraft(entry);
+  selectedLedgerImageEntryId = '';
+  selectedLedgerImageIndex = 0;
+  notice = '';
+
+  const currentDepth = typeof history.state?.depth === 'number' ? history.state.depth : 0;
+  history.pushState({
+    view: activeView,
+    editingId: entryId,
+    imageViewerId: '',
+    showHelp: false,
+    depth: currentDepth + 1,
+  }, '');
+
+  render();
+}
+
+function cancelLedgerEntryEdit(entryId) {
+  if (history.state?.editingId) {
+    safeHistoryBack();
+  } else {
+    revokePendingLedgerEntryImages(
+      ledgerEntryImageKey(entryId || editingLedgerEntryId),
+    );
+    discardLedgerEditDraft();
+    render();
+  }
+}
+
+function openHelpGuide() {
+  showHelpGuide = true;
+  const currentDepth = typeof history.state?.depth === 'number' ? history.state.depth : 0;
+  history.pushState({
+    view: activeView,
+    editingId: editingLedgerEntryId,
+    imageViewerId: selectedLedgerImageEntryId,
+    showHelp: true,
+    depth: currentDepth + 1,
+  }, '');
+  render();
+}
+
+function closeHelpGuide() {
+  if (history.state?.showHelp) {
+    safeHistoryBack();
+  } else {
+    showHelpGuide = false;
+    render();
+  }
+}
+
+function initHistory() {
+  if (!history.state || typeof history.state.depth !== 'number') {
+    history.replaceState({
+      view: 'ledger',
+      editingId: '',
+      imageViewerId: '',
+      showHelp: false,
+      depth: 0,
+    }, '');
+  } else {
+    activeView = history.state.view || 'ledger';
+    editingLedgerEntryId = history.state.editingId || '';
+    selectedLedgerImageEntryId = history.state.imageViewerId || '';
+    showHelpGuide = Boolean(history.state.showHelp);
+  }
+
+  window.addEventListener('popstate', (event) => {
+    isNavigatingHistory = false;
+    if (pendingNavigationTarget) {
+      const target = pendingNavigationTarget;
+      pendingNavigationTarget = null;
+      if (target !== 'ledger') {
+        history.pushState({
+          view: target,
+          editingId: '',
+          imageViewerId: '',
+          showHelp: false,
+          depth: 1,
+        }, '');
+        activeView = target;
+      } else {
+        activeView = 'ledger';
+      }
+      editingLedgerEntryId = '';
+      selectedLedgerImageEntryId = '';
+      showHelpGuide = false;
+      render();
+      return;
+    }
+    applyHistoryState(event.state);
+  });
+}
+
 function bindLedgerFilter() {
   const filterInput = document.querySelector('#ledger-filter');
   const clearBtn = document.querySelector('[data-action="clear-ledger-filter"]');
@@ -2848,25 +3145,12 @@ function bindLedgerRows() {
   }
   document.querySelectorAll('[data-edit-entry]').forEach((button) => {
     button.onclick = () => {
-      const entryId = button.dataset.editEntry;
-      const entry = ledgerEntryById(entryId);
-      if (!entry || !canManageEntry(entry)) return;
-      revokePendingLedgerEntryImages(ledgerEntryImageKey(entryId));
-      editingLedgerEntryId = entryId;
-      ledgerEditDraft = createLedgerEditDraft(entry);
-      selectedLedgerImageEntryId = '';
-      selectedLedgerImageIndex = 0;
-      notice = '';
-      render();
+      openLedgerEntryEdit(button.dataset.editEntry);
     };
   });
   document.querySelectorAll('[data-cancel-edit-entry]').forEach((button) => {
     button.onclick = () => {
-      revokePendingLedgerEntryImages(
-        ledgerEntryImageKey(button.dataset.cancelEditEntry),
-      );
-      discardLedgerEditDraft();
-      render();
+      cancelLedgerEntryEdit(button.dataset.cancelEditEntry);
     };
   });
   document.querySelectorAll('[data-add-edit-split]').forEach((button) => {
@@ -2900,14 +3184,11 @@ function bindLedgerRows() {
     button.onclick = () => {
       const newEntryForm = button.closest('#ledger-form');
       const editForm = button.closest('#ledger-edit-form');
-      if (newEntryForm) captureLedgerNewDraft(newEntryForm);
-      if (editForm) captureLedgerEditDraft(editForm);
-      selectedLedgerImageEntryId = button.dataset.viewLedgerImage;
-      selectedLedgerImageIndex = 0;
-      if (!newEntryForm && !editForm) {
-        discardLedgerEditDraft();
-      }
-      render();
+      openLedgerImageViewer(
+        button.dataset.viewLedgerImage,
+        newEntryForm,
+        editForm,
+      );
     };
   });
   document.querySelectorAll('[data-toggle-row-meta]').forEach((button) => {
@@ -2957,13 +3238,7 @@ function bind() {
   });
   document.querySelectorAll('[data-view]').forEach((button) => {
     button.onclick = () => {
-      clearAllPendingLedgerEntryImages();
-      activeView = button.dataset.view;
-      closeLedgerImageViewer();
-      discardLedgerEditDraft();
-      discardLedgerNewDraft();
-      notice = '';
-      render();
+      navigateToView(button.dataset.view);
     };
   });
   document.querySelectorAll('[data-view][role="button"]').forEach((control) => {
@@ -3110,16 +3385,10 @@ function bind() {
   document.querySelectorAll('[data-delete-ledger-image]').forEach((button) => {
     button.onclick = () => removeViewerLedgerImage(button.dataset.deleteLedgerImage);
   });
-  document.querySelector('[data-action="back-from-ledger-image"]')?.addEventListener('click', () => {
-    const wasNewEntry = selectedLedgerImageEntryId === NEW_LEDGER_ENTRY_IMAGE_KEY;
-    closeLedgerImageViewer();
-    if (wasNewEntry) {
-      activeView = 'add-entry';
-    } else if (!editingLedgerEntryId) {
-      activeView = 'ledger';
-    }
-    render();
-  });
+  document.querySelector('[data-action="back-from-ledger-image"]')?.addEventListener(
+    'click',
+    requestCloseLedgerImageViewer,
+  );
   document.querySelector('[data-action="copy-share-url"]')?.addEventListener('click', copyShareUrl);
   document.querySelector('[data-action="install-app"]')?.addEventListener('click', installApp);
   document.querySelector('[data-action="calculate-settlements"]')?.addEventListener(
@@ -3146,32 +3415,28 @@ function bind() {
   });
   document.querySelectorAll('[data-action="toggle-help-guide"]').forEach((button) => {
     button.onclick = () => {
-      showHelpGuide = !showHelpGuide;
-      render();
+      if (showHelpGuide) {
+        closeHelpGuide();
+      } else {
+        openHelpGuide();
+      }
     };
   });
   document.querySelectorAll('[data-action="close-help-guide"]').forEach((element) => {
     element.onclick = (event) => {
       if (event.target === element || element.tagName === 'BUTTON') {
-        showHelpGuide = false;
-        render();
+        closeHelpGuide();
       }
     };
   });
   document.onkeydown = (event) => {
     if (event.key === 'Escape') {
       if (showHelpGuide) {
-        showHelpGuide = false;
-        render();
+        closeHelpGuide();
       } else if (selectedLedgerImageEntryId) {
-        const wasNewEntry = selectedLedgerImageEntryId === NEW_LEDGER_ENTRY_IMAGE_KEY;
-        closeLedgerImageViewer();
-        if (wasNewEntry) {
-          activeView = 'add-entry';
-        } else if (!editingLedgerEntryId) {
-          activeView = 'ledger';
-        }
-        render();
+        requestCloseLedgerImageViewer();
+      } else if (editingLedgerEntryId) {
+        cancelLedgerEntryEdit(editingLedgerEntryId);
       }
     }
   };
@@ -3476,8 +3741,13 @@ async function addLedgerEntry(event) {
     await batch.commit();
     revokePendingLedgerEntryImages(imageKey);
     discardLedgerNewDraft();
-    activeView = 'ledger';
     setNotice(t('entryAdded'));
+    if (history.state?.depth > 0) {
+      safeHistoryGo(-history.state.depth);
+    } else {
+      activeView = 'ledger';
+      render();
+    }
   } catch (error) {
     reportError(error);
   }
@@ -3643,6 +3913,13 @@ async function updateLedgerEntry(event) {
     revokePendingLedgerEntryImages(imageKey);
     discardLedgerEditDraft();
     setNotice(t('entryUpdated'));
+    if (history.state?.editingId) {
+      safeHistoryBack();
+    } else if (history.state?.depth > 0) {
+      safeHistoryGo(-history.state.depth);
+    } else {
+      render();
+    }
   } catch (error) {
     reportError(error);
   }
@@ -5062,6 +5339,15 @@ async function removeLedgerEntry(entryId) {
     }
     revokePendingLedgerEntryImages(ledgerEntryImageKey(entryId));
     setNotice(t('entryRemoved'));
+    const isCurrentEntryInHistory = (
+      history.state?.imageViewerId === entryId
+      || history.state?.editingId === entryId
+    );
+    if (isCurrentEntryInHistory && history.state?.depth > 0) {
+      safeHistoryGo(-history.state.depth);
+    } else {
+      render();
+    }
   } catch (error) {
     reportError(error);
   }
@@ -5168,6 +5454,9 @@ function watchActiveData() {
         ledgerEntryImageKey(editingLedgerEntryId),
       );
       discardLedgerEditDraft();
+      if (history.state?.depth > 0) {
+        safeHistoryGo(-history.state.depth);
+      }
     }
     render();
   }, listenerError('Ledger'));
@@ -5213,6 +5502,9 @@ function watchActiveData() {
         if (!entry || (!viewerImages.length && !canManageEntry(entry))) {
           closeLedgerImageViewer();
           pendingLedgerImageFocus = null;
+          if (history.state?.depth > 0) {
+            safeHistoryGo(-history.state.depth);
+          }
         } else {
           if (pendingLedgerImageFocus?.entryId === selectedLedgerImageEntryId) {
             const focusIndex = viewerImages.findIndex(
@@ -5252,6 +5544,7 @@ async function fetchVersion() {
 }
 
 void fetchVersion();
+initHistory();
 
 function finishInitialLoading() {
   if (loadingOverlay) loadingOverlay.hidden = true;
@@ -5262,6 +5555,18 @@ onAuthStateChanged(auth, (user) => {
   authUser = user?.isAnonymous ? null : user;
   profile = null;
   activeView = 'ledger';
+  selectedLedgerImageEntryId = '';
+  editingLedgerEntryId = '';
+  showHelpGuide = false;
+  if (history.state?.depth > 0) {
+    history.replaceState({
+      view: 'ledger',
+      editingId: '',
+      imageViewerId: '',
+      showHelp: false,
+      depth: 0,
+    }, '');
+  }
   ledgerFilter = '';
   notice = '';
   settings = defaultSettings();
